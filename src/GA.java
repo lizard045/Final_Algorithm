@@ -21,6 +21,10 @@ public class GA {
     private final MutationStrategy mutationStrategy;
     // ----------------
 
+    // --- 快取機制 ---
+    private Map<String, Double> fitnessCache;
+    // -----------------
+
     private final double explorationMutationRate; // For exploration mode
     private final double explorationLocalSearchRate;
     private static final int STAGNATION_LIMIT = 30; // Generations
@@ -43,6 +47,7 @@ public class GA {
         this.explorationMutationRate = Math.min(1.0, mutationRate * 5); 
         this.explorationLocalSearchRate = Math.max(0.0, localSearchRate / 5);
         this.population = new ArrayList<>(populationSize);
+        this.fitnessCache = new HashMap<>(); // 初始化快取
 
         // 初始化預設策略
         this.crossoverStrategy = new CombinedCrossoverStrategy();
@@ -54,17 +59,17 @@ public class GA {
     }
 
     public void initializePopulation() {
-        // Initialize with one full HEFT solution (both order and assignment)
-        Schedule heftSchedule = Heuristics.createHeftSchedule(dag);
-        heftSchedule.evaluateFitness();
-        population.add(heftSchedule);
-        bestSchedule = heftSchedule.clone();
+        // **核心升級**: 使用 PEFT 演算法產生初始解和基準順序
+        Schedule peftSchedule = Heuristics.createPeftSchedule(dag);
+        evaluate(peftSchedule);
+        population.add(peftSchedule);
+        bestSchedule = peftSchedule.clone();
         
-        // Fill the rest with HEFT order but random assignments for diversity
-        List<Integer> heftOrder = heftSchedule.getTaskOrder();
+        // Fill the rest with PEFT order but random assignments for diversity
+        List<Integer> peftOrder = peftSchedule.getTaskOrder();
         while (population.size() < populationSize) {
-            Schedule randomSchedule = createRandomScheduleWithFixedOrder(heftOrder);
-            randomSchedule.evaluateFitness();
+            Schedule randomSchedule = createRandomScheduleWithFixedOrder(peftOrder);
+            evaluate(randomSchedule);
             population.add(randomSchedule);
             if (randomSchedule.getMakespan() < bestSchedule.getMakespan()) {
                 bestSchedule = randomSchedule.clone();
@@ -105,11 +110,18 @@ public class GA {
             Schedule child = crossoverStrategy.crossover(parent1, parent2, dag, random);
             mutationStrategy.mutate(child, currentMutationRate, dag, random);
             
-            if (random.nextDouble() < currentLocalSearchRate) {
+            evaluate(child); // 先進行一次初步評估
+
+            // **核心優化**：只對有潛力的子代進行昂貴的局部搜尋
+            // 條件：子代的makespan優於其任一親代
+            if (random.nextDouble() < currentLocalSearchRate && 
+                (child.getMakespan() < parent1.getMakespan() || child.getMakespan() < parent2.getMakespan())) {
+                
                 child.criticalPathLocalSearch();
+                // 局部搜尋後，schedule的狀態已改變，需要重新加入快取
+                fitnessCache.put(child.getCacheKey(), child.getMakespan());
             }
             
-            child.evaluateFitness();
             newPopulation.add(child);
         }
 
@@ -220,5 +232,28 @@ public class GA {
         Schedule schedule = new Schedule(dag, chromosome);
         schedule.setTaskOrder(new ArrayList<>(order)); // Use a copy of the order
         return schedule;
+    }
+
+    /**
+     * **NEW**: 評估排程的適應度，使用快取來避免重複計算。
+     * 這是所有適應度評估的統一入口。
+     */
+    private double evaluate(Schedule schedule) {
+        // 如果已經評估過（例如，經過了局部搜尋），直接返回結果
+        if (schedule.isEvaluated()) {
+            return schedule.getMakespan();
+        }
+
+        String key = schedule.getCacheKey();
+        if (fitnessCache.containsKey(key)) {
+            double cachedMakespan = fitnessCache.get(key);
+            // 需要手動設定makespan，因為getCacheKey()不保證設定它
+            schedule.setMakespan(cachedMakespan); 
+            return cachedMakespan;
+        }
+        
+        double makespan = schedule.evaluateFitness();
+        fitnessCache.put(key, makespan);
+        return makespan;
     }
 } 

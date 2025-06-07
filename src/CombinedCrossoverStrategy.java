@@ -1,13 +1,10 @@
 import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Random;
-import java.util.Set;
 
 /**
  * CombinedCrossoverStrategy類別：實現組合交配策略
- * 對分配部分使用均勻交配，對排序部分使用Order Crossover (OX1)
+ * 對分配部分使用均勻交配，排序部分則直接繼承自父代
  */
 public class CombinedCrossoverStrategy implements CrossoverStrategy {
     @Override
@@ -25,49 +22,13 @@ public class CombinedCrossoverStrategy implements CrossoverStrategy {
             }
         }
 
-        // 2. 對排序部分執行Order Crossover (OX1)
-        List<Integer> childOrder = orderCrossover(parent1.getTaskOrder(), parent2.getTaskOrder(), random);
+        // 2. **核心簡化**：直接繼承父代的任務順序（因為所有順序都應相同）
+        List<Integer> childOrder = new ArrayList<>(parent1.getTaskOrder());
 
         // 3. 創建新的子代 Schedule
         Schedule child = new Schedule(dag, childAssignment);
         child.setTaskOrder(childOrder);
         
         return child;
-    }
-
-    private List<Integer> orderCrossover(List<Integer> order1, List<Integer> order2, Random random) {
-        int size = order1.size();
-        List<Integer> childOrder = new ArrayList<>(Collections.nCopies(size, null));
-
-        // 隨機選擇一個連續的子序列
-        int start = random.nextInt(size);
-        int end = random.nextInt(size);
-        if (start > end) {
-            int temp = start;
-            start = end;
-            end = temp;
-        }
-
-        // 將 parent1 的子序列複製到子代
-        Set<Integer> copiedTasks = new HashSet<>();
-        for (int i = start; i <= end; i++) {
-            int task = order1.get(i);
-            childOrder.set(i, task);
-            copiedTasks.add(task);
-        }
-
-        // 從 parent2 填補剩餘的空位
-        int currentPos = (end + 1) % size;
-        for (int task : order2) {
-            if (!copiedTasks.contains(task)) {
-                // 找到下一個空位
-                while (childOrder.get(currentPos) != null) {
-                    currentPos = (currentPos + 1) % size;
-                }
-                childOrder.set(currentPos, task);
-            }
-        }
-        
-        return childOrder;
     }
 } 

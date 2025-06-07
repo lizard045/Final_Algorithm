@@ -9,7 +9,7 @@ public class Schedule implements Cloneable {
     private int[] chromosome; // 染色體：chromosome[i] = j 表示任務i分配給處理器j
     private List<Integer> taskOrder; // 排序染色體：任務的執行順序
     private double makespan; // 總完成時間（適應度值）
-    private boolean isEvaluated; // 是否已計算適應度
+    boolean isEvaluated; // 將可見性改為 package-private 以便GA存取
     private DAG dag; // DAG參考
 
     // 用於追蹤關鍵路徑
@@ -22,6 +22,36 @@ public class Schedule implements Cloneable {
         this.makespan = 0.0;
         this.isEvaluated = false;
         this.criticalPathLinks = new HashMap<>();
+    }
+    
+    /**
+     * **NEW**: 產生一個此排程的唯一標識符，用於快取。
+     * @return 代表此排程的唯一字串鍵。
+     */
+    public String getCacheKey() {
+        // 確保順序是合法的，這樣相同的邏輯狀態才能產生相同的鍵
+        if (!isEvaluated) {
+            evaluateFitness();
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append(Arrays.toString(chromosome));
+        sb.append(':');
+        // taskOrder might be null before the first evaluation
+        if (taskOrder != null) {
+            for (Integer taskId : taskOrder) {
+                sb.append(taskId).append(',');
+            }
+        }
+        return sb.toString();
+    }
+    
+    /**
+     * **NEW**: 手動設定 makespan，主要用於從快取中恢復狀態。
+     * @param makespan 要設定的 makespan 值。
+     */
+    public void setMakespan(double makespan) {
+        this.makespan = makespan;
+        this.isEvaluated = true; // 當手動設定makespan時，也應將其視為已評估
     }
     
     public Schedule(DAG dag, int[] assignment) {
@@ -68,10 +98,15 @@ public class Schedule implements Cloneable {
 
         this.criticalPathLinks.clear();
 
-        // **核心修正**：在使用之前，將任務順序合法化為有效的拓撲排序
-        List<Integer> legalTaskOrder = createLegalOrder();
+        // **恢復**：直接使用 taskOrder，因為它是由HEFT提供且固定的
+        if (this.taskOrder == null || this.taskOrder.isEmpty()) {
+            // 這個備用方案理論上不應被觸發，但作為保護性程式碼保留
+            this.taskOrder = Heuristics.getRankedTasks(dag).stream()
+                                  .map(Task::getTaskId)
+                                  .collect(Collectors.toList());
+        }
         
-        for (int taskId : legalTaskOrder) { // <-- 使用合法化的順序
+        for (int taskId : this.taskOrder) {
             Task task = dag.getTask(taskId);
             int processorId = chromosome[taskId];
             
@@ -124,64 +159,14 @@ public class Schedule implements Cloneable {
     }
 
     /**
-     * **NEW**: 將GA產生的任務順序轉換為一個有效的拓撲排序，以避免無效的排程。
-     * 此方法使用Kahn演算法，並以GA提供的順序作為優先級，來決定下一步處理哪個「就緒」的任務。
-     */
-    private List<Integer> createLegalOrder() {
-        if (this.taskOrder == null || this.taskOrder.isEmpty()) {
-            this.taskOrder = Heuristics.getRankedTasks(dag).stream()
-                                  .map(Task::getTaskId)
-                                  .collect(Collectors.toList());
-        }
-
-        Map<Integer, Integer> inDegree = new HashMap<>();
-        for (Task t : dag.getTasks()) {
-            inDegree.put(t.getTaskId(), t.getPredecessors().size());
-        }
-
-        Map<Integer, Integer> priority = new HashMap<>();
-        for (int i = 0; i < this.taskOrder.size(); i++) {
-            priority.put(this.taskOrder.get(i), i);
-        }
-
-        PriorityQueue<Integer> readyQueue = new PriorityQueue<>(Comparator.comparingInt(task -> priority.getOrDefault(task, Integer.MAX_VALUE)));
-        for (Task t : dag.getTasks()) {
-            if (inDegree.get(t.getTaskId()) == 0) {
-                readyQueue.add(t.getTaskId());
-            }
-        }
-
-        List<Integer> legalOrder = new ArrayList<>();
-        while (!readyQueue.isEmpty()) {
-            int taskId = readyQueue.poll();
-            legalOrder.add(taskId);
-
-            for (int successorId : dag.getTask(taskId).getSuccessors()) {
-                int newDegree = inDegree.get(successorId) - 1;
-                inDegree.put(successorId, newDegree);
-                if (newDegree == 0) {
-                    readyQueue.add(successorId);
-                }
-            }
-        }
-
-        if (legalOrder.size() != dag.getTaskCount()) {
-            throw new RuntimeException("排程錯誤：任務圖中可能存在環路，無法產生有效的拓撲排序。");
-        }
-        
-        // 更新自身的taskOrder為合法版本，這樣後續操作(如clone)都會使用正確的順序
-        this.taskOrder = legalOrder;
-        return legalOrder;
-    }
-
-    /**
-     * 基於關鍵路徑的局部搜尋 (新)
+     * 基於關鍵路徑的局部搜尋 (完整版)
+     * 會持續迭代直到找不到任何改進為止。
      */
     public void criticalPathLocalSearch() {
         boolean improvedInLoop;
         do {
             improvedInLoop = false;
-            evaluateFitness(); // Ensure makespan and critical path are up to date
+            evaluateFitness(); // 確保 makespan 和關鍵路徑是最新的
             List<Integer> criticalPath = findCriticalPath();
 
             for (int taskId : criticalPath) {
@@ -204,7 +189,7 @@ public class Schedule implements Cloneable {
                 }
                 
                 // 無論是否找到更好的，都恢復到這個迴圈開始前的最佳狀態
-                chromosome[taskId] = (bestProcessor == originalProcessor) ? originalProcessor : bestProcessor;
+                chromosome[taskId] = bestProcessor;
                 
                 if (improvedInLoop) {
                     evaluateFitness(); // 更新狀態
@@ -310,6 +295,10 @@ public class Schedule implements Cloneable {
         }
         sb.append("END\n");
         return sb.toString();
+    }
+
+    public boolean isEvaluated() {
+        return isEvaluated;
     }
 
     // Public clone method

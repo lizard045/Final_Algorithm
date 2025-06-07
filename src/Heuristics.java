@@ -167,7 +167,7 @@ public class Heuristics {
             // Move one step along the path
             currentChromosome[indexToChange] = guidingChromosome[indexToChange];
             
-            // Evaluate and perform intensive local search on the intermediate solution
+            // **恢復**：在中間解上執行完整的、高強度的局部搜尋
             current.evaluateFitness();
             current.criticalPathLocalSearch();
 
@@ -175,6 +175,108 @@ public class Heuristics {
                 bestFound = current.clone();
             }
         }
+        
         return bestFound;
+    }
+
+    // --- PEFT Implementation ---
+
+    /**
+     * **NEW**: 創建一個基於 PEFT 演算法的排程
+     */
+    public static Schedule createPeftSchedule(DAG dag) {
+        double[][] oct = computeOptimisticCostTable(dag);
+        dag.setOctCache(oct); // Cache for later use in mutation
+
+        List<Task> taskPriorityList = getPeftRankedTasks(dag, oct);
+        List<Integer> taskOrder = new ArrayList<>();
+        for (Task t : taskPriorityList) {
+            taskOrder.add(t.getTaskId());
+        }
+
+        // --- Processor Selection Phase (similar to HEFT) ---
+        int taskCount = dag.getTaskCount();
+        int[] assignment = new int[taskCount];
+        double[] taskFinishTimes = new double[taskCount];
+        Arrays.fill(taskFinishTimes, -1.0);
+        
+        Processor[] processors = new Processor[dag.getProcessorCount()];
+        for (int i = 0; i < dag.getProcessorCount(); i++) {
+            processors[i] = new Processor(i);
+        }
+
+        for (Task task : taskPriorityList) {
+            int taskId = task.getTaskId();
+            double minEFT = Double.MAX_VALUE;
+            int bestProcessorId = -1;
+
+            for (int pId = 0; pId < dag.getProcessorCount(); pId++) {
+                double earliestStartTime = processors[pId].getReadyTime();
+                double dataReadyTime = 0;
+                for (int predId : task.getPredecessors()) {
+                    int predProcessorId = assignment[predId];
+                    double predFinishTime = taskFinishTimes[predId];
+                    double commCost = dag.getCommunicationCost(predId, taskId, predProcessorId, pId);
+                    dataReadyTime = Math.max(dataReadyTime, predFinishTime + commCost);
+                }
+                earliestStartTime = Math.max(earliestStartTime, dataReadyTime);
+                double finishTime = earliestStartTime + task.getComputationCost(pId);
+                if (finishTime < minEFT) {
+                    minEFT = finishTime;
+                    bestProcessorId = pId;
+                }
+            }
+            assignment[taskId] = bestProcessorId;
+            taskFinishTimes[taskId] = minEFT;
+            processors[bestProcessorId].setReadyTime(minEFT);
+        }
+
+        Schedule schedule = new Schedule(dag, assignment);
+        schedule.setTaskOrder(taskOrder);
+        return schedule;
+    }
+    
+    private static List<Task> getPeftRankedTasks(DAG dag, double[][] oct) {
+        double[] peftRanks = new double[dag.getTaskCount()];
+        for (int i = 0; i < dag.getTaskCount(); i++) {
+            double rankSum = 0;
+            for (int j = 0; j < dag.getProcessorCount(); j++) {
+                rankSum += oct[i][j];
+            }
+            peftRanks[i] = rankSum / dag.getProcessorCount();
+        }
+        
+        List<Task> tasks = new ArrayList<>(dag.getTasks());
+        tasks.sort((t1, t2) -> Double.compare(peftRanks[t2.getTaskId()], peftRanks[t1.getTaskId()]));
+        return tasks;
+    }
+
+    private static double[][] computeOptimisticCostTable(DAG dag) {
+        int taskCount = dag.getTaskCount();
+        int processorCount = dag.getProcessorCount();
+        double[][] oct = new double[taskCount][processorCount];
+        List<Integer> topologicalOrder = dag.getTopologicalOrder();
+        Collections.reverse(topologicalOrder); // from exit to entry
+
+        for (int taskId : topologicalOrder) {
+            Task task = dag.getTask(taskId);
+            for (int pId = 0; pId < processorCount; pId++) {
+                double avgCompCost = task.getComputationCost(pId);
+                
+                double maxSuccCost = 0;
+                if (!task.getSuccessors().isEmpty()) {
+                    for (int succId : task.getSuccessors()) {
+                        double minSuccOct = Double.MAX_VALUE;
+                        for (int succPId = 0; succPId < processorCount; succPId++) {
+                            double commCost = dag.getCommunicationCost(taskId, succId, pId, succPId);
+                            minSuccOct = Math.min(minSuccOct, oct[succId][succPId] + commCost);
+                        }
+                        maxSuccCost = Math.max(maxSuccCost, minSuccOct);
+                    }
+                }
+                oct[taskId][pId] = avgCompCost + maxSuccCost;
+            }
+        }
+        return oct;
     }
 } 

@@ -1,15 +1,13 @@
 import java.util.*;
-import java.util.stream.Collectors;
 
 /**
- * Implements the Island Model for Genetic Algorithms.
- * This class manages multiple populations (islands) of schedules,
- * evolving them in parallel and periodically migrating the best individuals
- * between them to enhance diversity and escape local optima.
+ * Implements the Island Model for Genetic Algorithms with enhanced, on-demand communication.
+ * This class manages multiple populations (islands), evolving them in parallel.
+ * Migration is no longer time-based; instead, a stagnating island actively
+ * requests elite individuals from the current best-performing island.
  */
 public class IslandModelGA {
     private final int numIslands;
-    private final int migrationInterval; // In generations
     private final int migrationSize; // Number of individuals to migrate
     private final List<GA> islands;
     private final int totalGenerations;
@@ -18,7 +16,6 @@ public class IslandModelGA {
     public IslandModelGA(
         int numIslands, 
         int totalGenerations, 
-        int migrationInterval, 
         int migrationSize,
         int populationPerIsland,
         double mutationRate,
@@ -27,21 +24,18 @@ public class IslandModelGA {
         
         this.numIslands = numIslands;
         this.totalGenerations = totalGenerations;
-        this.migrationInterval = migrationInterval;
         this.migrationSize = migrationSize;
         this.dagFile = dagFile;
         this.islands = new ArrayList<>();
 
         for (int i = 0; i < numIslands; i++) {
-            // Each island is a standard GA instance
             islands.add(new GA(populationPerIsland, totalGenerations, mutationRate, localSearchRate, dagFile));
         }
     }
 
     public Schedule run() {
-        System.out.printf("Starting Island Model GA with %d islands.\n", numIslands);
+        System.out.printf("Starting Island Model GA with %d islands (Enhanced On-Demand Migration).\n", numIslands);
         
-        // Initial evolution
         for (GA island : islands) {
             island.initializePopulation();
         }
@@ -49,45 +43,56 @@ public class IslandModelGA {
         for (int gen = 0; gen < totalGenerations; gen++) {
             // Evolve each island independently
             for (GA island : islands) {
-                island.evolveOnce(); // A new method to evolve for a single generation
+                island.evolveOnce();
             }
 
-            // Perform migration periodically
-            if ((gen + 1) % migrationInterval == 0 && gen < totalGenerations - 1) {
-                System.out.printf("--- Migration at Generation %d ---\n", gen + 1);
-                performMigration();
-            }
+            // Perform migration on-demand based on stagnation
+            performDynamicMigration(gen);
         }
         
-        // Find the best schedule among all islands at the end
         return findBestScheduleOverall();
     }
 
-    private void performMigration() {
-        // Collect the best individuals from each island
-        List<Schedule> migrants = new ArrayList<>();
+    private void performDynamicMigration(int generation) {
+        // 1. Find the best island to be the source of elite migrants
+        GA bestIsland = null;
+        Schedule bestOverallSchedule = null;
+
         for (GA island : islands) {
-            migrants.addAll(island.getBestSchedules(migrationSize));
+            Schedule bestInIsland = island.getBestSchedule();
+            if (bestOverallSchedule == null || bestInIsland.getMakespan() < bestOverallSchedule.getMakespan()) {
+                bestOverallSchedule = bestInIsland;
+                bestIsland = island;
+            }
         }
-        
-        // Shuffle migrants to ensure random distribution
-        Collections.shuffle(migrants);
-        
-        // Distribute migrants to the next island in a ring topology
-        for (int i = 0; i < numIslands; i++) {
-            GA currentIsland = islands.get(i);
-            GA nextIsland = islands.get((i + 1) % numIslands);
-            
-            // Get the required number of migrants for the next island
-            List<Schedule> migrantsForNextIsland = migrants.stream()
-                .limit(migrationSize)
-                .collect(Collectors.toList());
-            
-            nextIsland.receiveMigrants(migrantsForNextIsland);
-            
-            // Rotate the list for the next iteration
-            if (!migrants.isEmpty()) {
-                 Collections.rotate(migrants, -migrationSize);
+
+        if (bestIsland == null) return; // Should not happen in a populated model
+
+        // 2. Check for stagnating islands and perform migration from the best island
+        boolean migrationHeaderPrinted = false;
+        for (GA island : islands) {
+            // An island requests help if it's stagnating AND it's not the best one
+            if (island != bestIsland && island.isStagnating()) {
+                if (!migrationHeaderPrinted) {
+                    System.out.printf("--- Dynamic Migration & Path-Relinking at Generation %d ---\n", generation + 1);
+                    System.out.printf("  - Best island (Best Makespan: %.2f) is the guide.\n", bestOverallSchedule.getMakespan());
+                    migrationHeaderPrinted = true;
+                }
+                
+                System.out.printf("  - Island (Best: %.2f) is stagnating, initiating help protocol.\n", island.getBestSchedule().getMakespan());
+                
+                // --- Path-Relinking Step ---
+                Schedule sourceSchedule = island.getBestSchedule();
+                Schedule guidingSchedule = bestIsland.getBestSchedule();
+                Schedule pathRelinkingResult = Heuristics.pathRelinking(sourceSchedule, guidingSchedule);
+                System.out.printf("    - Path-Relinking explored from %.2f to %.2f, found new best: %.2f\n", 
+                                  sourceSchedule.getMakespan(), guidingSchedule.getMakespan(), pathRelinkingResult.getMakespan());
+
+                // --- Migration Step ---
+                List<Schedule> migrants = bestIsland.getBestSchedules(migrationSize);
+                migrants.add(pathRelinkingResult); // Add the PL result to the migrant pool
+                
+                island.receiveMigrants(migrants);
             }
         }
     }

@@ -28,14 +28,13 @@ public class Main {
         String[] dagFiles = {"n4_00.dag", "n4_02.dag", "n4_04.dag", "n4_06.dag"};
         Map<String, ExperimentResult> finalResults = new LinkedHashMap<>();
         
-        // --- Aggressive Island Model GA Configuration ---
+        // --- Final Strategy: Island Model with On-Demand Path-Relinking ---
         final int NUM_ISLANDS = 8;
         final int TOTAL_GENERATIONS = 800;
-        final int MIGRATION_INTERVAL = 20; // Every 20 generations, more frequent
-        final int MIGRATION_SIZE = 3;      // Migrate top 3 individuals, more impact
+        final int MIGRATION_SIZE = 3;      // Number of elites for migration
         
         // Per-island configuration
-        final int POPULATION_PER_ISLAND = 60; // Larger population for more diversity
+        final int POPULATION_PER_ISLAND = 60; 
         final double MUTATION_RATE = 0.2;
         final double LOCAL_SEARCH_RATE = 0.7;
 
@@ -44,7 +43,7 @@ public class Main {
             System.out.println("Running Island Model GA for: " + dagFile);
             System.out.println("==========================================================");
 
-            final int RUN_COUNT = 10;
+            final int RUN_COUNT = 5;
             List<Double> bestResults = new ArrayList<>();
             double totalRunningTime = 0;
 
@@ -55,7 +54,6 @@ public class Main {
                 IslandModelGA islandGA = new IslandModelGA(
                     NUM_ISLANDS,
                     TOTAL_GENERATIONS,
-                    MIGRATION_INTERVAL,
                     MIGRATION_SIZE,
                     POPULATION_PER_ISLAND,
                     MUTATION_RATE,

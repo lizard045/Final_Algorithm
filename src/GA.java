@@ -16,6 +16,11 @@ public class GA {
     private final Random random = new Random();
     private Schedule bestSchedule;
     
+    // --- 策略模式 ---
+    private final CrossoverStrategy crossoverStrategy;
+    private final MutationStrategy mutationStrategy;
+    // ----------------
+
     private final double explorationMutationRate; // For exploration mode
     private final double explorationLocalSearchRate;
     private static final int STAGNATION_LIMIT = 30; // Generations
@@ -38,6 +43,10 @@ public class GA {
         this.explorationMutationRate = Math.min(1.0, mutationRate * 5); 
         this.explorationLocalSearchRate = Math.max(0.0, localSearchRate / 5);
         this.population = new ArrayList<>(populationSize);
+
+        // 初始化預設策略
+        this.crossoverStrategy = new CombinedCrossoverStrategy();
+        this.mutationStrategy = new CombinedMutationStrategy();
     }
     
     public Schedule getBestSchedule() {
@@ -45,15 +54,16 @@ public class GA {
     }
 
     public void initializePopulation() {
-        // Initialize with one HEFT solution
+        // Initialize with one full HEFT solution (both order and assignment)
         Schedule heftSchedule = Heuristics.createHeftSchedule(dag);
         heftSchedule.evaluateFitness();
         population.add(heftSchedule);
         bestSchedule = heftSchedule.clone();
         
-        // Fill the rest with random solutions
+        // Fill the rest with HEFT order but random assignments for diversity
+        List<Integer> heftOrder = heftSchedule.getTaskOrder();
         while (population.size() < populationSize) {
-            Schedule randomSchedule = createRandomSchedule();
+            Schedule randomSchedule = createRandomScheduleWithFixedOrder(heftOrder);
             randomSchedule.evaluateFitness();
             population.add(randomSchedule);
             if (randomSchedule.getMakespan() < bestSchedule.getMakespan()) {
@@ -92,8 +102,8 @@ public class GA {
         while (newPopulation.size() < populationSize) {
             Schedule parent1 = selectParent();
             Schedule parent2 = selectParent();
-            Schedule child = crossover(parent1, parent2);
-            mutate(child, currentMutationRate);
+            Schedule child = crossoverStrategy.crossover(parent1, parent2, dag, random);
+            mutationStrategy.mutate(child, currentMutationRate, dag, random);
             
             if (random.nextDouble() < currentLocalSearchRate) {
                 child.criticalPathLocalSearch();
@@ -131,9 +141,19 @@ public class GA {
         for (int i = 0; i < migrants.size() && i < population.size(); i++) {
             population.set(i, migrants.get(i).clone()); // Replace worst with migrant
         }
-        // After receiving migrants, re-evaluate the best schedule for the island
+        // After receiving migrants, reset stagnation/exploration and re-evaluate the best schedule
+        stagnationCounter = 0;
+        explorationCounter = 0; // Also exit any ongoing exploration
         updateBestSchedule();
-        System.out.printf("  - Island received %d migrants. New best is %.2f\n", migrants.size(), bestSchedule.getMakespan());
+        System.out.printf("  - Island received %d migrants. New best is %.2f. Stagnation reset.\n", migrants.size(), bestSchedule.getMakespan());
+    }
+
+    /**
+     * Checks if the island is currently in a state of stagnation.
+     * @return true if the stagnation counter has reached the limit, false otherwise.
+     */
+    public boolean isStagnating() {
+        return stagnationCounter >= STAGNATION_LIMIT;
     }
 
     private void updateBestSchedule() {
@@ -182,56 +202,6 @@ public class GA {
         return best;
     }
 
-    private Schedule crossover(Schedule parent1, Schedule parent2) {
-        int[] childChromosome = new int[dag.getTaskCount()];
-        int[] p1Chromosome = parent1.getChromosome();
-        int[] p2Chromosome = parent2.getChromosome();
-
-        // Uniform Crossover
-        for (int i = 0; i < dag.getTaskCount(); i++) {
-            if (random.nextBoolean()) {
-                childChromosome[i] = p1Chromosome[i];
-            } else {
-                childChromosome[i] = p2Chromosome[i];
-            }
-        }
-        return new Schedule(dag, childChromosome);
-    }
-    
-    private void mutate(Schedule schedule, double effectiveMutationRate) {
-        int[] chromosome = schedule.getChromosome();
-        for (int i = 0; i < chromosome.length; i++) {
-            if (random.nextDouble() < effectiveMutationRate) {
-                // Smart mutation: prefer processors with lower computation cost for this task
-                int currentTask = i;
-                int currentProc = chromosome[currentTask];
-                
-                double minCost = Double.MAX_VALUE;
-                int bestProc = currentProc;
-
-                for (int p = 0; p < dag.getProcessorCount(); p++) {
-                    double cost = dag.getTask(currentTask).getComputationCost(p);
-                    if (cost < minCost) {
-                        minCost = cost;
-                        bestProc = p;
-                    }
-                }
-                
-                // Mutate to the best processor, or a random one if multiple are equally good
-                if (bestProc != currentProc) {
-                    chromosome[currentTask] = bestProc;
-                } else {
-                    // If already on the best, mutate to a random different one
-                    int newProc = random.nextInt(dag.getProcessorCount());
-                    while (newProc == currentProc) {
-                        newProc = random.nextInt(dag.getProcessorCount());
-                    }
-                    chromosome[currentTask] = newProc;
-                }
-            }
-        }
-    }
-
     private Schedule createRandomSchedule() {
         int[] chromosome = new int[dag.getTaskCount()];
         List<Task> taskOrder = Heuristics.getRankedTasks(dag); // Use ranked order for better random schedules
@@ -240,5 +210,15 @@ public class GA {
             chromosome[taskId] = random.nextInt(dag.getProcessorCount());
         }
         return new Schedule(dag, chromosome);
+    }
+    
+    private Schedule createRandomScheduleWithFixedOrder(List<Integer> order) {
+        int[] chromosome = new int[dag.getTaskCount()];
+        for (int i = 0; i < dag.getTaskCount(); i++) {
+            chromosome[i] = random.nextInt(dag.getProcessorCount());
+        }
+        Schedule schedule = new Schedule(dag, chromosome);
+        schedule.setTaskOrder(new ArrayList<>(order)); // Use a copy of the order
+        return schedule;
     }
 } 

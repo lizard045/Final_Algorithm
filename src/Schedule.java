@@ -1,4 +1,5 @@
 import java.util.*;
+import java.util.stream.Collectors;
 
 /**
  * Schedule類別：表示一個調度方案
@@ -6,6 +7,7 @@ import java.util.*;
  */
 public class Schedule implements Cloneable {
     private int[] chromosome; // 染色體：chromosome[i] = j 表示任務i分配給處理器j
+    private List<Integer> taskOrder; // 排序染色體：任務的執行順序
     private double makespan; // 總完成時間（適應度值）
     private boolean isEvaluated; // 是否已計算適應度
     private DAG dag; // DAG參考
@@ -33,6 +35,7 @@ public class Schedule implements Cloneable {
     public Schedule(Schedule other) {
         this.dag = other.dag;
         this.chromosome = Arrays.copyOf(other.chromosome, other.chromosome.length);
+        this.taskOrder = (other.taskOrder != null) ? new ArrayList<>(other.taskOrder) : null;
         this.makespan = other.makespan;
         this.isEvaluated = other.isEvaluated;
         // 注意：criticalPathLinks是基於計算的結果，淺拷貝即可，因為每次evaluate都會重建
@@ -65,10 +68,11 @@ public class Schedule implements Cloneable {
 
         this.criticalPathLinks.clear();
 
-        List<Task> scheduleOrder = Heuristics.getRankedTasks(dag);
-
-        for (Task task : scheduleOrder) {
-            int taskId = task.getTaskId();
+        // **核心修正**：在使用之前，將任務順序合法化為有效的拓撲排序
+        List<Integer> legalTaskOrder = createLegalOrder();
+        
+        for (int taskId : legalTaskOrder) { // <-- 使用合法化的順序
+            Task task = dag.getTask(taskId);
             int processorId = chromosome[taskId];
             
             double processorReadyTime = processorFinishTimes[processorId];
@@ -117,6 +121,57 @@ public class Schedule implements Cloneable {
 
         isEvaluated = true;
         return makespan;
+    }
+
+    /**
+     * **NEW**: 將GA產生的任務順序轉換為一個有效的拓撲排序，以避免無效的排程。
+     * 此方法使用Kahn演算法，並以GA提供的順序作為優先級，來決定下一步處理哪個「就緒」的任務。
+     */
+    private List<Integer> createLegalOrder() {
+        if (this.taskOrder == null || this.taskOrder.isEmpty()) {
+            this.taskOrder = Heuristics.getRankedTasks(dag).stream()
+                                  .map(Task::getTaskId)
+                                  .collect(Collectors.toList());
+        }
+
+        Map<Integer, Integer> inDegree = new HashMap<>();
+        for (Task t : dag.getTasks()) {
+            inDegree.put(t.getTaskId(), t.getPredecessors().size());
+        }
+
+        Map<Integer, Integer> priority = new HashMap<>();
+        for (int i = 0; i < this.taskOrder.size(); i++) {
+            priority.put(this.taskOrder.get(i), i);
+        }
+
+        PriorityQueue<Integer> readyQueue = new PriorityQueue<>(Comparator.comparingInt(task -> priority.getOrDefault(task, Integer.MAX_VALUE)));
+        for (Task t : dag.getTasks()) {
+            if (inDegree.get(t.getTaskId()) == 0) {
+                readyQueue.add(t.getTaskId());
+            }
+        }
+
+        List<Integer> legalOrder = new ArrayList<>();
+        while (!readyQueue.isEmpty()) {
+            int taskId = readyQueue.poll();
+            legalOrder.add(taskId);
+
+            for (int successorId : dag.getTask(taskId).getSuccessors()) {
+                int newDegree = inDegree.get(successorId) - 1;
+                inDegree.put(successorId, newDegree);
+                if (newDegree == 0) {
+                    readyQueue.add(successorId);
+                }
+            }
+        }
+
+        if (legalOrder.size() != dag.getTaskCount()) {
+            throw new RuntimeException("排程錯誤：任務圖中可能存在環路，無法產生有效的拓撲排序。");
+        }
+        
+        // 更新自身的taskOrder為合法版本，這樣後續操作(如clone)都會使用正確的順序
+        this.taskOrder = legalOrder;
+        return legalOrder;
     }
 
     /**
@@ -221,6 +276,15 @@ public class Schedule implements Cloneable {
         return chromosome;
     }
     
+    public List<Integer> getTaskOrder() {
+        return taskOrder;
+    }
+
+    public void setTaskOrder(List<Integer> taskOrder) {
+        this.taskOrder = taskOrder;
+        this.isEvaluated = false; // 順序改變，需要重新評估
+    }
+    
     public double getMakespan() {
         if (!isEvaluated) {
             evaluateFitness();
@@ -238,6 +302,13 @@ public class Schedule implements Cloneable {
         for (int i = 0; i < chromosome.length; i++) {
             sb.append(String.format("  Task %d -> Processor %d\n", i, chromosome[i]));
         }
+        sb.append("Task Execution Order:\n  ");
+        if (taskOrder != null) {
+            for (int taskId : taskOrder) {
+                sb.append(taskId).append(" -> ");
+            }
+        }
+        sb.append("END\n");
         return sb.toString();
     }
 
@@ -247,11 +318,15 @@ public class Schedule implements Cloneable {
         try {
             Schedule cloned = (Schedule) super.clone();
             // The chromosome array needs to be deep-copied
-            System.arraycopy(this.chromosome, 0, cloned.chromosome, 0, this.chromosome.length);
-            // Makespan and critical path are re-evaluated, so no need to copy.
+            cloned.chromosome = Arrays.copyOf(this.chromosome, this.chromosome.length);
+            // The taskOrder list also needs to be deep-copied
+            if (this.taskOrder != null) {
+                cloned.taskOrder = new ArrayList<>(this.taskOrder);
+            }
+            cloned.criticalPathLinks = new HashMap<>(this.criticalPathLinks);
             return cloned;
         } catch (CloneNotSupportedException e) {
-            throw new AssertionError(); // Should not happen.
+            throw new AssertionError(); // Should not happen
         }
     }
 } 

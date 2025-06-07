@@ -12,6 +12,7 @@ public class DAG {
     private double[][] communicationRates; // 處理器間通訊成本
     private List<Task> tasks; // 任務列表
     private boolean isHomogeneous; // 是否為同質性系統
+    private List<Task> rankedTasksCache = null; // 快取欄位
     
     public DAG() {
         this.tasks = new ArrayList<>();
@@ -174,6 +175,16 @@ public class DAG {
     public Task getTask(int taskId) { return tasks.get(taskId); }
     public boolean isHomogeneous() { return isHomogeneous; }
     public double[][] getCommunicationRates() { return communicationRates; }
+    
+    // --- 新增的快取相關方法 ---
+    public List<Task> getRankedTasksCache() {
+        return this.rankedTasksCache;
+    }
+    
+    public void setRankedTasksCache(List<Task> rankedTasks) {
+        this.rankedTasksCache = rankedTasks;
+    }
+    // -------------------------
     
     @Override
     public String toString() {

@@ -1,3 +1,5 @@
+package core;
+
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -60,6 +62,15 @@ public class Schedule implements Cloneable {
     }
     
     /**
+     * **NEW for ACO**: Constructor for creating a schedule with a given assignment and task order.
+     */
+    public Schedule(DAG dag, int[] assignment, List<Integer> taskOrder) {
+        this(dag, assignment);
+        this.taskOrder = new ArrayList<>(taskOrder);
+        this.isEvaluated = false; // Needs evaluation with the new order
+    }
+    
+    /**
      * 複製建構子
      */
     public Schedule(Schedule other) {
@@ -90,7 +101,6 @@ public class Schedule implements Cloneable {
             return makespan;
         }
         
-        double[] actualStartTimes = new double[dag.getTaskCount()];
         double[] actualFinishTimes = new double[dag.getTaskCount()];
         double[] processorFinishTimes = new double[dag.getProcessorCount()];
         int[] lastTaskOnProcessor = new int[dag.getProcessorCount()];
@@ -107,7 +117,6 @@ public class Schedule implements Cloneable {
         }
         
         for (int taskId : this.taskOrder) {
-            Task task = dag.getTask(taskId);
             int processorId = chromosome[taskId];
             
             double processorReadyTime = processorFinishTimes[processorId];
@@ -137,7 +146,6 @@ public class Schedule implements Cloneable {
             double executionTime = dag.getTask(taskId).getComputationCost(processorId);
             double aft = ast + executionTime;
             
-            actualStartTimes[taskId] = ast;
             actualFinishTimes[taskId] = aft;
             processorFinishTimes[processorId] = aft;
             lastTaskOnProcessor[processorId] = taskId;
@@ -156,6 +164,13 @@ public class Schedule implements Cloneable {
 
         isEvaluated = true;
         return makespan;
+    }
+
+    /**
+     * **NEW for ACO**: A public method to calculate makespan, which is just an alias for evaluateFitness.
+     */
+    public double calculateMakespan() {
+        return evaluateFitness();
     }
 
     /**
@@ -299,6 +314,18 @@ public class Schedule implements Cloneable {
 
     public boolean isEvaluated() {
         return isEvaluated;
+    }
+
+    /**
+     * **NEW for ACO**: Gets the processor assignment for a specific task.
+     * @param taskId The ID of the task.
+     * @return The ID of the processor the task is assigned to.
+     */
+    public int getProcessorForTask(int taskId) {
+        if (taskId >= 0 && taskId < chromosome.length) {
+            return chromosome[taskId];
+        }
+        return -1; // Return -1 for invalid task ID
     }
 
     // Public clone method

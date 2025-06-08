@@ -1,3 +1,5 @@
+package core;
+
 import java.io.*;
 import java.util.*;
 
@@ -172,6 +174,19 @@ public class DAG {
         double commRate = communicationRates[fromProcessor][toProcessor];
         
         return dataVolume * commRate;
+    }
+    
+    /**
+     * **NEW for ACO**: Gets the computation cost of a specific task on a specific processor.
+     * @param taskId The ID of the task.
+     * @param processorId The ID of the processor.
+     * @return The computation cost.
+     */
+    public double getComputationCost(int taskId, int processorId) {
+        if (taskId < 0 || taskId >= taskCount) {
+            throw new IllegalArgumentException("Invalid task ID: " + taskId);
+        }
+        return tasks.get(taskId).getComputationCost(processorId);
     }
     
     /**

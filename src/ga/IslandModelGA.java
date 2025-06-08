@@ -1,3 +1,7 @@
+package ga;
+
+import core.Heuristics;
+import core.Schedule;
 import java.util.*;
 
 /**
@@ -11,7 +15,6 @@ public class IslandModelGA {
     private final int migrationSize; // Number of individuals to migrate
     private final List<GA> islands;
     private final int totalGenerations;
-    private final String dagFile;
 
     public IslandModelGA(
         int numIslands, 
@@ -25,7 +28,6 @@ public class IslandModelGA {
         this.numIslands = numIslands;
         this.totalGenerations = totalGenerations;
         this.migrationSize = migrationSize;
-        this.dagFile = dagFile;
         this.islands = new ArrayList<>();
 
         for (int i = 0; i < numIslands; i++) {
@@ -60,7 +62,7 @@ public class IslandModelGA {
 
         for (GA island : islands) {
             Schedule bestInIsland = island.getBestSchedule();
-            if (bestOverallSchedule == null || bestInIsland.getMakespan() < bestOverallSchedule.getMakespan()) {
+            if (bestOverallSchedule == null || (bestInIsland != null && bestInIsland.getMakespan() < bestOverallSchedule.getMakespan())) {
                 bestOverallSchedule = bestInIsland;
                 bestIsland = island;
             }
@@ -75,7 +77,9 @@ public class IslandModelGA {
             if (island != bestIsland && island.isStagnating()) {
                 if (!migrationHeaderPrinted) {
                     System.out.printf("--- Dynamic Migration & Path-Relinking at Generation %d ---\n", generation + 1);
-                    System.out.printf("  - Best island (Best Makespan: %.2f) is the guide.\n", bestOverallSchedule.getMakespan());
+                    if (bestOverallSchedule != null) {
+                        System.out.printf("  - Best island (Best Makespan: %.2f) is the guide.\n", bestOverallSchedule.getMakespan());
+                    }
                     migrationHeaderPrinted = true;
                 }
                 
@@ -105,7 +109,7 @@ public class IslandModelGA {
                 bestOverall = bestInIsland;
             }
         }
-        System.out.println("\nIsland Model GA finished. Final best makespan: " + (bestOverall != null ? bestOverall.getMakespan() : "N/A"));
+        System.out.println("\nIsland Model GA finished. Final best makespan: " + (bestOverall != null ? String.format("%.2f", bestOverall.getMakespan()) : "N/A"));
         return bestOverall;
     }
 } 

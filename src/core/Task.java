@@ -1,3 +1,5 @@
+package core;
+
 import java.util.*;
 
 /**
@@ -5,8 +7,8 @@ import java.util.*;
  * 包含任務ID、計算成本、依賴關係等資訊
  */
 public class Task {
-    private int taskId;
-    private double[] computationCosts; // 在每個處理器上的執行成本
+    private final int taskId;
+    private final double[] computationCosts; // computationCosts[j] 是在處理器 j 上的成本
     private List<Integer> predecessors; // 前驅任務列表
     private List<Integer> successors;   // 後繼任務列表
     private Map<Integer, Integer> dataTransferVolume; // 與其他任務的數據傳輸量

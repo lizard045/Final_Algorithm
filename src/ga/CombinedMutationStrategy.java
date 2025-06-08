@@ -1,3 +1,7 @@
+package ga;
+
+import core.DAG;
+import core.Schedule;
 import java.util.Collections;
 import java.util.List;
 import java.util.Random;
@@ -7,7 +11,8 @@ import java.util.Random;
  * 對分配部分使用智慧突變，對排序部分使用受控的相鄰交換突變
  */
 public class CombinedMutationStrategy implements MutationStrategy {
-    private static final double ORDER_MUTATION_PROBABILITY = 0.1; // 為順序交換設定一個獨立的、較低的機率
+    private static final double ORDER_MUTATION_PROBABILITY = 0.1; // 整個順序被考慮進行突變的總機率
+    private static final double ADJACENT_SWAP_PROBABILITY = 0.05; // 每對可交換的相鄰任務被交換的獨立機率
 
     @Override
     public void mutate(Schedule schedule, double mutationRate, DAG dag, Random random) {
@@ -90,22 +95,29 @@ public class CombinedMutationStrategy implements MutationStrategy {
      */
     private void localSwapMutateOrder(Schedule schedule, DAG dag, Random random) {
         if (random.nextDouble() > ORDER_MUTATION_PROBABILITY) {
-            return;
+            return; // 以較大機率跳過整個順序突變，專注於分配突變
         }
 
         List<Integer> order = schedule.getTaskOrder();
         if (order == null || order.size() < 2) return;
         
-        // 隨機選擇一個位置進行嘗試
-        int swapIndex = random.nextInt(order.size() - 1);
+        boolean mutated = false;
+        // **核心升級**：遍歷整個列表，對每一對可交換的相鄰任務都有機率進行交換
+        for (int i = 0; i < order.size() - 1; i++) {
+            int task1_id = order.get(i);
+            int task2_id = order.get(i + 1);
+            
+            // 檢查依賴性：如果 task2 不依賴於 task1，則可以安全交換
+            if (!dag.isReachable(task1_id, task2_id)) {
+                if (random.nextDouble() < ADJACENT_SWAP_PROBABILITY) {
+                    Collections.swap(order, i, i + 1);
+                    mutated = true;
+                }
+            }
+        }
         
-        int task1_id = order.get(swapIndex);
-        int task2_id = order.get(swapIndex + 1);
-        
-        // 檢查依賴性：如果 task2 不依賴於 task1，則可以安全交換
-        if (!dag.isReachable(task1_id, task2_id)) {
-            Collections.swap(order, swapIndex, swapIndex + 1);
-            schedule.setTaskOrder(order); // 觸發重新評估
+        if (mutated) {
+            schedule.setTaskOrder(order); // 如果發生了至少一次交換，才觸發重新評估
         }
     }
 } 

@@ -1,3 +1,5 @@
+import aco.ACO;
+import core.Schedule;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -28,7 +30,8 @@ public class Main {
         String[] dagFiles = {"n4_00.dag", "n4_02.dag", "n4_04.dag", "n4_06.dag"};
         Map<String, ExperimentResult> finalResults = new LinkedHashMap<>();
         
-        // --- Final Strategy: Island Model with On-Demand Path-Relinking ---
+        // --- GA Strategy: Island Model with On-Demand Path-Relinking ---
+        /*
         final int NUM_ISLANDS = 8;
         final int TOTAL_GENERATIONS = 800;
         final int MIGRATION_SIZE = 3;      // Number of elites for migration
@@ -37,10 +40,19 @@ public class Main {
         final int POPULATION_PER_ISLAND = 60; 
         final double MUTATION_RATE = 0.2;
         final double LOCAL_SEARCH_RATE = 0.7;
+        */
+
+        // --- New ACO Strategy ---
+        final int NUM_ANTS = 50;
+        final int ACO_GENERATIONS = 200;
+        final double ALPHA = 1.0; // Pheromone importance
+        final double BETA = 2.0;  // Heuristic importance
+        final double EVAPORATION_RATE = 0.5;
+        final double LOCAL_SEARCH_RATE_ACO = 0.3; // **NEW for ACO Local Search**
 
         for (String dagFile : dagFiles) {
             System.out.println("==========================================================");
-            System.out.println("Running Island Model GA for: " + dagFile);
+            System.out.println("Running ACO for: " + dagFile);
             System.out.println("==========================================================");
 
             final int RUN_COUNT = 5;
@@ -51,6 +63,8 @@ public class Main {
                 System.out.println("\n--- Run " + (i + 1) + "/" + RUN_COUNT + " ---");
                 long startTime = System.currentTimeMillis();
                 
+                // --- GA Run ---
+                /*
                 IslandModelGA islandGA = new IslandModelGA(
                     NUM_ISLANDS,
                     TOTAL_GENERATIONS,
@@ -60,8 +74,20 @@ public class Main {
                     LOCAL_SEARCH_RATE,
                     dagFile
                 );
-                
                 Schedule bestSchedule = islandGA.run();
+                */
+
+                // --- ACO Run ---
+                ACO aco = new ACO(
+                    NUM_ANTS,
+                    ACO_GENERATIONS,
+                    ALPHA,
+                    BETA,
+                    EVAPORATION_RATE,
+                    LOCAL_SEARCH_RATE_ACO, // **NEW**
+                    dagFile
+                );
+                Schedule bestSchedule = aco.run();
                 
                 long endTime = System.currentTimeMillis();
                 double runTime = (endTime - startTime) / 1000.0;
@@ -116,6 +142,7 @@ public class Main {
      * 參數自動調優方法
      * @param dagFile 要進行調優的DAG檔案
      */
+    /*
     public static void parameterTuning(String dagFile) {
         System.out.println("Starting parameter tuning for: " + dagFile);
 
@@ -164,4 +191,5 @@ public class Main {
         System.out.println(">> With parameters: " + bestParams);
         System.out.println("=====================================================================================");
     }
+    */
 }

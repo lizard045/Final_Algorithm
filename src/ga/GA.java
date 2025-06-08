@@ -1,3 +1,8 @@
+package ga;
+
+import core.DAG;
+import core.Heuristics;
+import core.Schedule;
 import java.io.IOException;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -22,7 +27,7 @@ public class GA {
     // ----------------
 
     // --- 快取機制 ---
-    private Map<String, Double> fitnessCache;
+    private final Map<String, Double> fitnessCache;
     // -----------------
 
     private final double explorationMutationRate; // For exploration mode
@@ -82,6 +87,8 @@ public class GA {
 
         for (int i = 0; i < generations; i++) {
             evolveOnce();
+            System.out.printf("Generation %d: Best Makespan=%.2f, Stagnation=%d/%d, Exploring=%d\n",
+                i + 1, bestSchedule.getMakespan(), stagnationCounter, STAGNATION_LIMIT, explorationCounter);
         }
         
         System.out.printf("Finished GA run. Best Makespan: %.2f\n", bestSchedule.getMakespan());
@@ -110,16 +117,27 @@ public class GA {
             Schedule child = crossoverStrategy.crossover(parent1, parent2, dag, random);
             mutationStrategy.mutate(child, currentMutationRate, dag, random);
             
-            evaluate(child); // 先進行一次初步評估
+            evaluate(child);
 
-            // **核心優化**：只對有潛力的子代進行昂貴的局部搜尋
-            // 條件：子代的makespan優於其任一親代
-            if (random.nextDouble() < currentLocalSearchRate && 
-                (child.getMakespan() < parent1.getMakespan() || child.getMakespan() < parent2.getMakespan())) {
-                
+            // **核心優化**: 根據是否處於探索模式，採用不同的局部搜尋策略
+            boolean performLocalSearch = false;
+            if (explorationCounter > 0) {
+                // 在探索模式下，以固定機率進行局部搜尋，以充分探索新區域
+                if (random.nextDouble() < currentLocalSearchRate) {
+                    performLocalSearch = true;
+                }
+            } else {
+                // 在常規模式下，只對有潛力的子代（優於父代）進行局部搜尋
+                if (random.nextDouble() < currentLocalSearchRate && 
+                    (child.getMakespan() < parent1.getMakespan() || child.getMakespan() < parent2.getMakespan())) {
+                    performLocalSearch = true;
+                }
+            }
+            
+            if (performLocalSearch) {
                 child.criticalPathLocalSearch();
                 // 局部搜尋後，schedule的狀態已改變，需要重新加入快取
-                fitnessCache.put(child.getCacheKey(), child.getMakespan());
+                evaluate(child);
             }
             
             newPopulation.add(child);
@@ -214,16 +232,6 @@ public class GA {
         return best;
     }
 
-    private Schedule createRandomSchedule() {
-        int[] chromosome = new int[dag.getTaskCount()];
-        List<Task> taskOrder = Heuristics.getRankedTasks(dag); // Use ranked order for better random schedules
-        for (Task task : taskOrder) {
-            int taskId = task.getTaskId();
-            chromosome[taskId] = random.nextInt(dag.getProcessorCount());
-        }
-        return new Schedule(dag, chromosome);
-    }
-    
     private Schedule createRandomScheduleWithFixedOrder(List<Integer> order) {
         int[] chromosome = new int[dag.getTaskCount()];
         for (int i = 0; i < dag.getTaskCount(); i++) {
@@ -239,19 +247,17 @@ public class GA {
      * 這是所有適應度評估的統一入口。
      */
     private double evaluate(Schedule schedule) {
-        // 如果已經評估過（例如，經過了局部搜尋），直接返回結果
-        if (schedule.isEvaluated()) {
-            return schedule.getMakespan();
-        }
+        if (schedule == null) return Double.MAX_VALUE;
 
+        // **NEW**: 使用快取
         String key = schedule.getCacheKey();
         if (fitnessCache.containsKey(key)) {
+            // 從快取中獲取後，手動設定到 schedule 物件上
             double cachedMakespan = fitnessCache.get(key);
-            // 需要手動設定makespan，因為getCacheKey()不保證設定它
-            schedule.setMakespan(cachedMakespan); 
+            schedule.setMakespan(cachedMakespan);
             return cachedMakespan;
         }
-        
+
         double makespan = schedule.evaluateFitness();
         fitnessCache.put(key, makespan);
         return makespan;

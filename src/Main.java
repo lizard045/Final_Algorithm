@@ -39,7 +39,8 @@ public class Main {
         final double ALPHA = 1.0; // Pheromone importance
         final double BETA = 2.0;  // Heuristic importance
         final double EVAPORATION_RATE = 0.2;
-        final double LOCAL_SEARCH_RATE_ACO = 0.1; 
+        final double LOCAL_SEARCH_RATE_ACO = 0.2; 
+        final double EXPLOITATION_FACTOR_Q0 = 0.8; // **NEW**: Probability of making the best local choice
 
         for (String dagFile : dagFiles) {
             System.out.println("==========================================================");
@@ -62,6 +63,7 @@ public class Main {
                     BETA,
                     EVAPORATION_RATE,
                     LOCAL_SEARCH_RATE_ACO, 
+                    EXPLOITATION_FACTOR_Q0,
                     dagFile
                 );
                 Schedule bestSchedule = aco.run();

@@ -21,6 +21,7 @@ public class ACO {
     private final double beta;
     private final double evaporationRate;
     private final double localSearchRate;
+    private final double q0;
     private final double[][] pheromoneMatrix;
 
     private Schedule bestSchedule;
@@ -37,7 +38,7 @@ public class ACO {
     private int stagnationCounter = 0;
     private static final int STAGNATION_LIMIT = 30; // Generations before reset
 
-    public ACO(int numAnts, int generations, double alpha, double beta, double evaporationRate, double localSearchRate, String dagFile) {
+    public ACO(int numAnts, int generations, double alpha, double beta, double evaporationRate, double localSearchRate, double q0, String dagFile) {
         this.dag = new DAG();
         try {
             this.dag.loadFromFile(dagFile);
@@ -50,6 +51,7 @@ public class ACO {
         this.beta = beta;
         this.evaporationRate = evaporationRate;
         this.localSearchRate = localSearchRate;
+        this.q0 = q0;
         
         this.pheromoneMatrix = new double[dag.getTaskCount()][dag.getProcessorCount()];
         this.convergenceData = new ArrayList<>();
@@ -87,7 +89,7 @@ public class ACO {
             List<Ant> ants = createAnts();
             
             for (Ant ant : ants) {
-                ant.constructSolution(dag, pheromoneMatrix, alpha, beta);
+                ant.constructSolution(dag, pheromoneMatrix, alpha, beta, q0);
             }
 
             // --- Apply local search to the top N ants of the iteration ---

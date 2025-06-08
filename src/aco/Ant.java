@@ -34,7 +34,7 @@ public class Ant {
      * 建構一個完整的解決方案 (一個調度)
      * 螞蟻會根據資訊素和啟發式資訊，一步步選擇任務並為其分配處理器。
      */
-    public void constructSolution(DAG dag, double[][] pheromoneMatrix, double alpha, double beta) {
+    public void constructSolution(DAG dag, double[][] pheromoneMatrix, double alpha, double beta, double q0) {
         int taskCount = dag.getTaskCount();
         int processorCount = dag.getProcessorCount();
 
@@ -63,7 +63,7 @@ public class Ant {
             }
 
             // *** 核心步驟: 從所有可能的 (任務, 處理器) 組合中選擇最佳的一個 ***
-            Candidate bestCandidate = selectNextMove(readyTasks, dag, pheromoneMatrix, alpha, beta, processors, processorAssignments, taskFinishTimes);
+            Candidate bestCandidate = selectNextMove(readyTasks, dag, pheromoneMatrix, alpha, beta, processors, processorAssignments, taskFinishTimes, q0);
             int currentTaskId = bestCandidate.taskId;
             int bestProcessorId = bestCandidate.processorId;
 
@@ -90,9 +90,9 @@ public class Ant {
     }
 
     /**
-     * 全局輪盤賭選擇，從所有可行的 (任務, 處理器) 組合中選出下一步。
+     * **NEW**: 採用偽隨機比例規則，從所有可行的 (任務, 處理器) 組合中選出下一步。
      */
-    private Candidate selectNextMove(List<Integer> readyTasks, DAG dag, double[][] pheromoneMatrix, double alpha, double beta, Processor[] processors, int[] currentAssignments, double[] taskFinishTimes) {
+    private Candidate selectNextMove(List<Integer> readyTasks, DAG dag, double[][] pheromoneMatrix, double alpha, double beta, Processor[] processors, int[] currentAssignments, double[] taskFinishTimes, double q0) {
         List<Candidate> candidates = new ArrayList<>();
         double totalDesirability = 0.0;
 
@@ -116,19 +116,30 @@ public class Ant {
             }
         }
 
-        // 輪盤賭選擇
-        if (totalDesirability == 0 || candidates.isEmpty()) {
+        if (candidates.isEmpty()) {
             // Fallback: choose a random ready task and assign to a random processor
             int randomTask = readyTasks.get(random.nextInt(readyTasks.size()));
             return new Candidate(randomTask, random.nextInt(dag.getProcessorCount()), 0);
         }
 
-        double roll = random.nextDouble() * totalDesirability;
-        double cumulative = 0.0;
-        for (Candidate c : candidates) {
-            cumulative += c.desirability;
-            if (roll <= cumulative) {
-                return c;
+        // --- **NEW** Pseudo-random proportional rule ---
+        if (random.nextDouble() < q0) {
+            // Exploitation: Choose the best candidate
+            return candidates.stream()
+                             .max(Comparator.comparingDouble(c -> c.desirability))
+                             .orElse(candidates.get(0)); // Should not be empty here
+        } else {
+            // Exploration: Roulette wheel selection
+            if (totalDesirability == 0) {
+                return candidates.get(random.nextInt(candidates.size()));
+            }
+            double roll = random.nextDouble() * totalDesirability;
+            double cumulative = 0.0;
+            for (Candidate c : candidates) {
+                cumulative += c.desirability;
+                if (roll <= cumulative) {
+                    return c;
+                }
             }
         }
         

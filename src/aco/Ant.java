@@ -1,6 +1,7 @@
 package aco;
 
 import core.DAG;
+import core.Heuristics;
 import core.Processor;
 import core.Schedule;
 import java.util.*;
@@ -12,6 +13,7 @@ import java.util.*;
 public class Ant {
     private Schedule schedule;
     private final Random random = new Random();
+    private double[] upwardRanks; // **NEW**: Cache upward ranks for efficiency
 
     // 用於儲存候選的 (任務, 處理器) 組合
     private static class Candidate {
@@ -35,6 +37,9 @@ public class Ant {
      * 螞蟻會根據資訊素和啟發式資訊，一步步選擇任務並為其分配處理器。
      */
     public void constructSolution(DAG dag, double[][] pheromoneMatrix, double alpha, double beta, double q0) {
+        // **NEW**: Pre-compute upward ranks for enhanced heuristic
+        this.upwardRanks = Heuristics.calculateUpwardRanks(dag);
+        
         int taskCount = dag.getTaskCount();
         int processorCount = dag.getProcessorCount();
 
@@ -90,7 +95,8 @@ public class Ant {
     }
 
     /**
-     * **NEW**: 採用偽隨機比例規則，從所有可行的 (任務, 處理器) 組合中選出下一步。
+     * **ENHANCED**: 採用偽隨機比例規則，從所有可行的 (任務, 處理器) 組合中選出下一步。
+     * 新增向上排名作為啟發式資訊的一部分。
      */
     private Candidate selectNextMove(List<Integer> readyTasks, DAG dag, double[][] pheromoneMatrix, double alpha, double beta, Processor[] processors, int[] currentAssignments, double[] taskFinishTimes, double q0) {
         List<Candidate> candidates = new ArrayList<>();
@@ -100,11 +106,13 @@ public class Ant {
             for (int pId = 0; pId < dag.getProcessorCount(); pId++) {
                 double pheromone = Math.pow(pheromoneMatrix[taskId][pId], alpha);
 
-                // 啟發式資訊: 恢復為簡單的 1/EFT
+                // **ENHANCED**: 啟發式資訊結合 EFT 和 Upward Rank
                 double eft = calculateEFT(taskId, pId, dag, processors, currentAssignments, taskFinishTimes);
                 if (eft == 0) eft = 0.0001; // Avoid division by zero
 
-                double heuristic = 1.0 / eft;
+                // **NEW**: Enhanced heuristic = (1/EFT) × UpwardRank
+                double taskImportance = this.upwardRanks[taskId];
+                double heuristic = (1.0 / eft) * taskImportance;
                 
                 double desirability = pheromone * Math.pow(heuristic, beta);
 

@@ -34,13 +34,15 @@ public class Main {
         Map<String, ExperimentResult> finalResults = new LinkedHashMap<>();
         
         // --- ACO Strategy ---
-        final int NUM_ANTS = 50;
+        final int NUM_ANTS = 60; // **ENHANCED**: Increased from 50 to 60 for better exploration
         final int ACO_GENERATIONS = 200;
-        final double ALPHA = 1.0; // Pheromone importance
-        final double BETA = 2.0;  // Heuristic importance
+        final double ALPHA = 0.8; // **ENHANCED**: Reduced from 1.0 to give more weight to heuristic
+        final double BETA = 2.5;  // **ENHANCED**: Increased from 2.0 to leverage enhanced heuristic
         final double EVAPORATION_RATE = 0.2;
-        final double LOCAL_SEARCH_RATE_ACO = 0.2; 
+        final double LOCAL_SEARCH_RATE_ACO = 0.3; // **ENHANCED**: Increased from 0.2 to 0.3
         final double EXPLOITATION_FACTOR_Q0 = 0.8; // **NEW**: Probability of making the best local choice
+        final int NUM_RANKED_ANTS = 6; // **NEW**: Number of top ants to update pheromone
+        final double ELITIST_WEIGHT = 6.0; // **MODIFIED**: Weight for the global best solution's pheromone
 
         for (String dagFile : dagFiles) {
             System.out.println("==========================================================");
@@ -64,6 +66,8 @@ public class Main {
                     EVAPORATION_RATE,
                     LOCAL_SEARCH_RATE_ACO, 
                     EXPLOITATION_FACTOR_Q0,
+                    ELITIST_WEIGHT,
+                    NUM_RANKED_ANTS,
                     dagFile
                 );
                 Schedule bestSchedule = aco.run();

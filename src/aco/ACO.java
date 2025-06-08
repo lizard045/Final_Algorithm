@@ -21,7 +21,10 @@ public class ACO {
     private final double beta;
     private final double evaporationRate;
     private final double localSearchRate;
-    private final double q0;
+    private double q0;
+    private final double initial_q0;
+    private final double elitistWeight;
+    private final int numRankedAnts;
     private final double[][] pheromoneMatrix;
 
     private Schedule bestSchedule;
@@ -34,11 +37,12 @@ public class ACO {
     private double tau_max;
     private double tau_min;
     
-    // **NEW**: Stagnation Handling
+    // **MODIFIED**: Stagnation Handling
     private int stagnationCounter = 0;
-    private static final int STAGNATION_LIMIT = 30; // Generations before reset
+    private static final int SOFT_STAGNATION_LIMIT = 30;
+    private static final int HARD_STAGNATION_LIMIT = 60;
 
-    public ACO(int numAnts, int generations, double alpha, double beta, double evaporationRate, double localSearchRate, double q0, String dagFile) {
+    public ACO(int numAnts, int generations, double alpha, double beta, double evaporationRate, double localSearchRate, double q0, double elitistWeight, int numRankedAnts, String dagFile) {
         this.dag = new DAG();
         try {
             this.dag.loadFromFile(dagFile);
@@ -52,6 +56,9 @@ public class ACO {
         this.evaporationRate = evaporationRate;
         this.localSearchRate = localSearchRate;
         this.q0 = q0;
+        this.initial_q0 = q0;
+        this.elitistWeight = elitistWeight;
+        this.numRankedAnts = numRankedAnts;
         
         this.pheromoneMatrix = new double[dag.getTaskCount()][dag.getProcessorCount()];
         this.convergenceData = new ArrayList<>();
@@ -106,12 +113,18 @@ public class ACO {
             if (bestSchedule == null || iterationBestSchedule.getMakespan() < bestSchedule.getMakespan()) {
                 bestSchedule = new Schedule(iterationBestSchedule);
                 stagnationCounter = 0; // Found a better solution, reset counter
+                
+                // Reset q0 to its initial value if it was lowered
+                if (this.q0 < this.initial_q0) {
+                    this.q0 = this.initial_q0;
+                    System.out.printf("  -> New global best found! Resetting q0 to %.2f\n", this.q0);
+                }
             } else {
                  stagnationCounter++;
             }
 
-            // 4. **REVERT**: 更新資訊素改用「當代最佳解」，以增加探索
-            updatePheromones(iterationBestSchedule);
+            // 4. 更新資訊素
+            updatePheromones(ants, bestSchedule);
 
             // 5. 處理停滯
             handleStagnation();
@@ -120,7 +133,7 @@ public class ACO {
             convergenceData.add(bestSchedule.getMakespan());
 
             System.out.printf("Generation %d: Iteration Best=%.2f, Global Best=%.2f, Stagnation=%d/%d\n",
-                    gen + 1, iterationBestSchedule.getMakespan(), bestSchedule.getMakespan(), stagnationCounter, STAGNATION_LIMIT);
+                    gen + 1, iterationBestSchedule.getMakespan(), bestSchedule.getMakespan(), stagnationCounter, HARD_STAGNATION_LIMIT);
         }
         
         System.out.printf("Finished ACO run. Best Makespan: %.2f\n", bestSchedule.getMakespan());
@@ -136,10 +149,11 @@ public class ACO {
     }
 
     /**
-     * **NEW**: MMAS 資訊素更新規則
-     * @param updateSchedule 用於更新資訊素的排程 (通常是當代最佳或全域最佳)
+     * **REVISED**: Implements Rank-Based pheromone update.
+     * @param sortedAnts The list of ants from the current generation, sorted by makespan.
+     * @param globalBest The best solution found so far over all generations.
      */
-    private void updatePheromones(Schedule updateSchedule) {
+    private void updatePheromones(List<Ant> sortedAnts, Schedule globalBest) {
         // 1. 資訊素蒸發
         for (int i = 0; i < dag.getTaskCount(); i++) {
             for (int j = 0; j < dag.getProcessorCount(); j++) {
@@ -147,16 +161,34 @@ public class ACO {
             }
         }
 
-        // 2. 資訊素增加 (只由指定的 schedule 貢獻)
-        double contribution = 1.0 / updateSchedule.getMakespan();
-        for (int taskId = 0; taskId < dag.getTaskCount(); taskId++) {
-            int processorId = updateSchedule.getProcessorForTask(taskId);
-            if (processorId != -1) {
-                pheromoneMatrix[taskId][processorId] += contribution;
+        // 2. **NEW**: Rank-based update from the top ants
+        for (int k = 0; k < this.numRankedAnts; k++) {
+            if (k >= sortedAnts.size()) break;
+            
+            Schedule s = sortedAnts.get(k).getSchedule();
+            // **ENHANCED**: Improved weight distribution for ASrank
+            double contribution = (this.numRankedAnts - k + 1.0) * (1.0 / s.getMakespan());
+            
+            for (int taskId = 0; taskId < dag.getTaskCount(); taskId++) {
+                int processorId = s.getProcessorForTask(taskId);
+                if (processorId != -1) {
+                    pheromoneMatrix[taskId][processorId] += contribution;
+                }
             }
         }
         
-        // 3. 強制執行資訊素上下限
+        // 3. 全域最佳解 (精英螞蟻) 貢獻資訊素
+        if (globalBest != null) {
+            double contribution = this.elitistWeight * (1.0 / globalBest.getMakespan());
+            for (int taskId = 0; taskId < dag.getTaskCount(); taskId++) {
+                int processorId = globalBest.getProcessorForTask(taskId);
+                if (processorId != -1) {
+                    pheromoneMatrix[taskId][processorId] += contribution;
+                }
+            }
+        }
+        
+        // 4. 強制執行資訊素上下限
         for (int i = 0; i < dag.getTaskCount(); i++) {
             for (int j = 0; j < dag.getProcessorCount(); j++) {
                 if (pheromoneMatrix[i][j] > tau_max) {
@@ -169,13 +201,25 @@ public class ACO {
     }
 
     /**
-     * **NEW**: 處理停滯，如果需要則重置資訊素
+     * **REVISED**: Hybrid stagnation handling.
      */
     private void handleStagnation() {
-        if (stagnationCounter >= STAGNATION_LIMIT) {
-            System.out.printf("  -> Stagnation detected! Resetting pheromones to tau_max (%.4f).\n", tau_max);
+        // Level 2: Hard Stagnation -> Reset Pheromones
+        if (stagnationCounter >= HARD_STAGNATION_LIMIT) {
+            System.out.printf("  -> Hard stagnation! Resetting pheromones to tau_max (%.4f).\n", tau_max);
             initializePheromones();
-            stagnationCounter = 0; // Reset after action
+            
+            // Also reset q0 to its initial value to start fresh
+            if (this.q0 < this.initial_q0) {
+                this.q0 = this.initial_q0;
+                System.out.printf("  -> Resetting q0 to %.2f\n", this.q0);
+            }
+            stagnationCounter = 0; // Reset counter completely after hard reset
+        } 
+        // Level 1: Soft Stagnation -> Adjust q0, triggers every SOFT_STAGNATION_LIMIT generations
+        else if (stagnationCounter > 0 && stagnationCounter % SOFT_STAGNATION_LIMIT == 0) {
+            this.q0 = Math.max(0.5, this.q0 * 0.95); // Decrease q0, with a floor of 0.5
+            System.out.printf("  -> Soft stagnation (Stagnation gens: %d)! Reducing q0 to %.4f.\n", stagnationCounter, this.q0);
         }
     }
 

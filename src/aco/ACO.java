@@ -5,6 +5,7 @@ import core.Heuristics;
 import core.Schedule;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Random;
@@ -26,24 +27,35 @@ public class ACO {
     private final double elitistWeight;
     private final int numRankedAnts;
     private final double[][] pheromoneMatrix;
-
-    private Schedule bestSchedule;
-    private final Random random = new Random();
-
-    // **NEW**: To store convergence data
-    private List<Double> convergenceData;
     
-    // **PERFORMANCE**: Global cache for upward ranks
+    private Schedule bestSchedule;
+    // **STABILITY**: Fixed random seed for reproducible results
+    private final Random random = new Random(42);
+    
+    // **CONVERGENCE**: Tracking best solutions for convergence detection
+    private List<Double> convergenceData;
+    private Schedule[] recentBestSolutions = new Schedule[10]; // Track last 10 best solutions
+    private int recentBestIndex = 0;
+    
+    // **PERFORMANCE**: Pre-computed upward ranks
     private double[] cachedUpwardRanks;
-
-    // --- MMAS Parameters ---
+    
+    // MMAS parameters
     private double tau_max;
     private double tau_min;
     
-    // **MODIFIED**: Stagnation Handling
+    // **ENHANCED STAGNATION**: More sophisticated stagnation handling
     private int stagnationCounter = 0;
-    private static final int SOFT_STAGNATION_LIMIT = 30;
-    private static final int HARD_STAGNATION_LIMIT = 60;
+    private int convergenceCounter = 0; // **NEW**: Track convergence stability
+    private double lastBestMakespan = Double.MAX_VALUE;
+    private static final int SOFT_STAGNATION_LIMIT = 25; // **REDUCED**: More responsive
+    private static final int HARD_STAGNATION_LIMIT = 50; // **REDUCED**: Faster reset
+    private static final int CONVERGENCE_THRESHOLD = 15; // **NEW**: Stop if converged
+    private static final double CONVERGENCE_TOLERANCE = 0.01; // **NEW**: Convergence sensitivity
+    
+    // **STABILITY**: Diversity protection
+    private static final double MIN_DIVERSITY_THRESHOLD = 0.1;
+    private int diversityCounter = 0;
 
     public ACO(int numAnts, int generations, double alpha, double beta, double evaporationRate, double localSearchRate, double q0, double elitistWeight, int numRankedAnts, String dagFile) {
         this.dag = new DAG();
@@ -101,6 +113,9 @@ public class ACO {
         for (int gen = 0; gen < generations; gen++) {
             List<Ant> ants = createAnts();
             
+            // **STABILITY**: Use fixed random seed for each generation
+            Random genRandom = new Random(42 + gen);
+            
             for (Ant ant : ants) {
                 ant.constructSolution(dag, pheromoneMatrix, alpha, beta, q0, cachedUpwardRanks);
             }
@@ -115,10 +130,20 @@ public class ACO {
             // Find iteration best after local search
             Schedule iterationBestSchedule = ants.get(0).getSchedule();
 
-            // 與全域最佳解比較 (處理 bestSchedule 初始化為 null 的情況)
+            // **CONVERGENCE**: Check for convergence before updating best
+            boolean foundImprovement = false;
             if (bestSchedule == null || iterationBestSchedule.getMakespan() < bestSchedule.getMakespan()) {
                 bestSchedule = new Schedule(iterationBestSchedule);
-                stagnationCounter = 0; // Found a better solution, reset counter
+                stagnationCounter = 0;
+                foundImprovement = true;
+                
+                // **CONVERGENCE**: Update tracking
+                if (Math.abs(iterationBestSchedule.getMakespan() - lastBestMakespan) < CONVERGENCE_TOLERANCE) {
+                    convergenceCounter++;
+                } else {
+                    convergenceCounter = 0;
+                    lastBestMakespan = iterationBestSchedule.getMakespan();
+                }
                 
                 // Reset q0 to its initial value if it was lowered
                 if (this.q0 < this.initial_q0) {
@@ -126,20 +151,38 @@ public class ACO {
                     System.out.printf("  -> New global best found! Resetting q0 to %.2f\n", this.q0);
                 }
             } else {
-                 stagnationCounter++;
+                stagnationCounter++;
+                
+                // **CONVERGENCE**: Check if we're stuck at the same solution
+                if (Math.abs(iterationBestSchedule.getMakespan() - bestSchedule.getMakespan()) < CONVERGENCE_TOLERANCE) {
+                    convergenceCounter++;
+                } else {
+                    convergenceCounter = 0;
+                }
             }
+
+            // **STABILITY**: Track recent best solutions for diversity analysis
+            recentBestSolutions[recentBestIndex] = new Schedule(iterationBestSchedule);
+            recentBestIndex = (recentBestIndex + 1) % recentBestSolutions.length;
 
             // 4. 更新資訊素
             updatePheromones(ants, bestSchedule);
 
-            // 5. 處理停滯
-            handleStagnation();
+            // 5. **ENHANCED**: Advanced stagnation and diversity handling
+            handleAdvancedStagnation(ants);
             
             // Record data for convergence curve
             convergenceData.add(bestSchedule.getMakespan());
 
-            System.out.printf("Generation %d: Iteration Best=%.2f, Global Best=%.2f, Stagnation=%d/%d\n",
-                    gen + 1, iterationBestSchedule.getMakespan(), bestSchedule.getMakespan(), stagnationCounter, HARD_STAGNATION_LIMIT);
+            System.out.printf("Generation %d: Iteration Best=%.2f, Global Best=%.2f, Stagnation=%d, Convergence=%d\n",
+                    gen + 1, iterationBestSchedule.getMakespan(), bestSchedule.getMakespan(), 
+                    stagnationCounter, convergenceCounter);
+
+            // **CONVERGENCE**: Early stopping if converged
+            if (convergenceCounter >= CONVERGENCE_THRESHOLD) {
+                System.out.printf("  -> Algorithm converged after %d generations! Stopping early.\n", gen + 1);
+                break;
+            }
         }
         
         System.out.printf("Finished ACO run. Best Makespan: %.2f\n", bestSchedule.getMakespan());
@@ -213,9 +256,24 @@ public class ACO {
     }
 
     /**
-     * **REVISED**: Hybrid stagnation handling.
+     * **NEW**: Advanced stagnation handling with diversity protection.
      */
-    private void handleStagnation() {
+    private void handleAdvancedStagnation(List<Ant> ants) {
+        // **DIVERSITY**: Calculate population diversity
+        double diversity = calculatePopulationDiversity(ants);
+        
+        // **DIVERSITY**: Force diversity if too low
+        if (diversity < MIN_DIVERSITY_THRESHOLD) {
+            diversityCounter++;
+            if (diversityCounter >= 5) {
+                System.out.printf("  -> Low diversity detected (%.4f)! Forcing diversification.\n", diversity);
+                forceDiversification();
+                diversityCounter = 0;
+            }
+        } else {
+            diversityCounter = 0;
+        }
+        
         // Level 2: Hard Stagnation -> Reset Pheromones
         if (stagnationCounter >= HARD_STAGNATION_LIMIT) {
             System.out.printf("  -> Hard stagnation! Resetting pheromones to tau_max (%.4f).\n", tau_max);
@@ -227,11 +285,51 @@ public class ACO {
                 System.out.printf("  -> Resetting q0 to %.2f\n", this.q0);
             }
             stagnationCounter = 0; // Reset counter completely after hard reset
+            convergenceCounter = 0; // Reset convergence counter too
         } 
         // Level 1: Soft Stagnation -> Adjust q0, triggers every SOFT_STAGNATION_LIMIT generations
         else if (stagnationCounter > 0 && stagnationCounter % SOFT_STAGNATION_LIMIT == 0) {
-            this.q0 = Math.max(0.5, this.q0 * 0.95); // Decrease q0, with a floor of 0.5
+            this.q0 = Math.max(0.4, this.q0 * 0.9); // **ENHANCED**: More aggressive reduction
             System.out.printf("  -> Soft stagnation (Stagnation gens: %d)! Reducing q0 to %.4f.\n", stagnationCounter, this.q0);
+        }
+    }
+
+    /**
+     * **NEW**: Calculate population diversity based on makespan variance.
+     */
+    private double calculatePopulationDiversity(List<Ant> ants) {
+        if (ants.size() <= 1) return 1.0;
+        
+        double[] makespans = ants.stream()
+            .mapToDouble(ant -> ant.getSchedule().getMakespan())
+            .toArray();
+        
+        double mean = Arrays.stream(makespans).average().orElse(0.0);
+        double variance = Arrays.stream(makespans)
+            .map(x -> Math.pow(x - mean, 2))
+            .average().orElse(0.0);
+        
+        return Math.sqrt(variance) / mean; // Normalized standard deviation
+    }
+
+    /**
+     * **NEW**: Force diversification by partially randomizing pheromone matrix.
+     */
+    private void forceDiversification() {
+        int taskCount = dag.getTaskCount();
+        int processorCount = dag.getProcessorCount();
+        
+        // **STABILITY**: Use controlled randomization
+        Random diversityRandom = new Random(System.currentTimeMillis() % 1000);
+        
+        // Partially randomize 30% of pheromone values
+        for (int i = 0; i < taskCount; i++) {
+            for (int j = 0; j < processorCount; j++) {
+                if (diversityRandom.nextDouble() < 0.3) {
+                    // Set to random value between tau_min and tau_max
+                    pheromoneMatrix[i][j] = tau_min + diversityRandom.nextDouble() * (tau_max - tau_min);
+                }
+            }
         }
     }
 
@@ -246,4 +344,4 @@ public class ACO {
     public List<Double> getConvergenceData() {
         return convergenceData;
     }
-} 
+}

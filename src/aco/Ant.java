@@ -14,6 +14,10 @@ public class Ant {
     private Schedule schedule;
     private final Random random = new Random();
     private double[] upwardRanks; // **NEW**: Cache upward ranks for efficiency
+    
+    // **PERFORMANCE**: Object pool for candidates to reduce allocation overhead
+    private final List<Candidate> candidatePool = new ArrayList<>();
+    private int poolIndex = 0;
 
     // 用於儲存候選的 (任務, 處理器) 組合
     private static class Candidate {
@@ -22,6 +26,13 @@ public class Ant {
         double desirability;
 
         Candidate(int t, int p, double d) {
+            this.taskId = t;
+            this.processorId = p;
+            this.desirability = d;
+        }
+        
+        // **PERFORMANCE**: Method to reuse existing candidate objects
+        void set(int t, int p, double d) {
             this.taskId = t;
             this.processorId = p;
             this.desirability = d;
@@ -35,10 +46,11 @@ public class Ant {
     /**
      * 建構一個完整的解決方案 (一個調度)
      * 螞蟻會根據資訊素和啟發式資訊，一步步選擇任務並為其分配處理器。
+     * **PERFORMANCE**: Now accepts pre-computed upward ranks to avoid redundant calculations.
      */
-    public void constructSolution(DAG dag, double[][] pheromoneMatrix, double alpha, double beta, double q0) {
-        // **NEW**: Pre-compute upward ranks for enhanced heuristic
-        this.upwardRanks = Heuristics.calculateUpwardRanks(dag);
+    public void constructSolution(DAG dag, double[][] pheromoneMatrix, double alpha, double beta, double q0, double[] precomputedUpwardRanks) {
+        // **PERFORMANCE**: Use pre-computed upward ranks instead of calculating them
+        this.upwardRanks = precomputedUpwardRanks;
         
         int taskCount = dag.getTaskCount();
         int processorCount = dag.getProcessorCount();
@@ -97,27 +109,44 @@ public class Ant {
     /**
      * **ENHANCED**: 採用偽隨機比例規則，從所有可行的 (任務, 處理器) 組合中選出下一步。
      * 新增向上排名作為啟發式資訊的一部分。
+     * **PERFORMANCE**: Optimized mathematical operations.
      */
     private Candidate selectNextMove(List<Integer> readyTasks, DAG dag, double[][] pheromoneMatrix, double alpha, double beta, Processor[] processors, int[] currentAssignments, double[] taskFinishTimes, double q0) {
         List<Candidate> candidates = new ArrayList<>();
         double totalDesirability = 0.0;
+        
+        // **PERFORMANCE**: Reset pool index for reuse
+        poolIndex = 0;
 
         for (int taskId : readyTasks) {
+            double taskImportance = this.upwardRanks[taskId]; // **PERFORMANCE**: Cache outside inner loop
+            
             for (int pId = 0; pId < dag.getProcessorCount(); pId++) {
-                double pheromone = Math.pow(pheromoneMatrix[taskId][pId], alpha);
+                // **PERFORMANCE**: Reduced Math.pow calls
+                double pheromone = (alpha == 1.0) ? pheromoneMatrix[taskId][pId] : Math.pow(pheromoneMatrix[taskId][pId], alpha);
 
                 // **ENHANCED**: 啟發式資訊結合 EFT 和 Upward Rank
                 double eft = calculateEFT(taskId, pId, dag, processors, currentAssignments, taskFinishTimes);
                 if (eft == 0) eft = 0.0001; // Avoid division by zero
 
                 // **NEW**: Enhanced heuristic = (1/EFT) × UpwardRank
-                double taskImportance = this.upwardRanks[taskId];
                 double heuristic = (1.0 / eft) * taskImportance;
                 
-                double desirability = pheromone * Math.pow(heuristic, beta);
+                // **PERFORMANCE**: Optimized power calculation
+                double desirability = pheromone * ((beta == 1.0) ? heuristic : Math.pow(heuristic, beta));
 
                 if (Double.isFinite(desirability)) {
-                    Candidate candidate = new Candidate(taskId, pId, desirability);
+                    // **PERFORMANCE**: Use object pool to reduce allocation
+                    Candidate candidate;
+                    if (poolIndex < candidatePool.size()) {
+                        candidate = candidatePool.get(poolIndex);
+                        candidate.set(taskId, pId, desirability);
+                    } else {
+                        candidate = new Candidate(taskId, pId, desirability);
+                        candidatePool.add(candidate);
+                    }
+                    poolIndex++;
+                    
                     candidates.add(candidate);
                     totalDesirability += desirability;
                 }

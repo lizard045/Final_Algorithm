@@ -32,6 +32,9 @@ public class ACO {
 
     // **NEW**: To store convergence data
     private List<Double> convergenceData;
+    
+    // **PERFORMANCE**: Global cache for upward ranks
+    private double[] cachedUpwardRanks;
 
     // --- MMAS Parameters ---
     private double tau_max;
@@ -62,6 +65,9 @@ public class ACO {
         
         this.pheromoneMatrix = new double[dag.getTaskCount()][dag.getProcessorCount()];
         this.convergenceData = new ArrayList<>();
+        
+        // **PERFORMANCE**: Pre-compute and cache upward ranks once
+        this.cachedUpwardRanks = Heuristics.calculateUpwardRanks(dag);
     }
 
     private void initializePheromones() {
@@ -96,7 +102,7 @@ public class ACO {
             List<Ant> ants = createAnts();
             
             for (Ant ant : ants) {
-                ant.constructSolution(dag, pheromoneMatrix, alpha, beta, q0);
+                ant.constructSolution(dag, pheromoneMatrix, alpha, beta, q0, cachedUpwardRanks);
             }
 
             // --- Apply local search to the top N ants of the iteration ---
@@ -154,10 +160,15 @@ public class ACO {
      * @param globalBest The best solution found so far over all generations.
      */
     private void updatePheromones(List<Ant> sortedAnts, Schedule globalBest) {
-        // 1. 資訊素蒸發
-        for (int i = 0; i < dag.getTaskCount(); i++) {
-            for (int j = 0; j < dag.getProcessorCount(); j++) {
-                pheromoneMatrix[i][j] *= (1.0 - evaporationRate);
+        int taskCount = dag.getTaskCount();
+        int processorCount = dag.getProcessorCount();
+        
+        // 1. 資訊素蒸發 - **PERFORMANCE**: Optimized loop structure
+        double evapFactor = 1.0 - evaporationRate;
+        for (int i = 0; i < taskCount; i++) {
+            double[] pheromoneRow = pheromoneMatrix[i]; // **PERFORMANCE**: Cache row reference
+            for (int j = 0; j < processorCount; j++) {
+                pheromoneRow[j] *= evapFactor;
             }
         }
 
@@ -169,7 +180,7 @@ public class ACO {
             // **ENHANCED**: Improved weight distribution for ASrank
             double contribution = (this.numRankedAnts - k + 1.0) * (1.0 / s.getMakespan());
             
-            for (int taskId = 0; taskId < dag.getTaskCount(); taskId++) {
+            for (int taskId = 0; taskId < taskCount; taskId++) {
                 int processorId = s.getProcessorForTask(taskId);
                 if (processorId != -1) {
                     pheromoneMatrix[taskId][processorId] += contribution;
@@ -180,7 +191,7 @@ public class ACO {
         // 3. 全域最佳解 (精英螞蟻) 貢獻資訊素
         if (globalBest != null) {
             double contribution = this.elitistWeight * (1.0 / globalBest.getMakespan());
-            for (int taskId = 0; taskId < dag.getTaskCount(); taskId++) {
+            for (int taskId = 0; taskId < taskCount; taskId++) {
                 int processorId = globalBest.getProcessorForTask(taskId);
                 if (processorId != -1) {
                     pheromoneMatrix[taskId][processorId] += contribution;
@@ -188,13 +199,14 @@ public class ACO {
             }
         }
         
-        // 4. 強制執行資訊素上下限
-        for (int i = 0; i < dag.getTaskCount(); i++) {
-            for (int j = 0; j < dag.getProcessorCount(); j++) {
-                if (pheromoneMatrix[i][j] > tau_max) {
-                    pheromoneMatrix[i][j] = tau_max;
-                } else if (pheromoneMatrix[i][j] < tau_min) {
-                    pheromoneMatrix[i][j] = tau_min;
+        // 4. 強制執行資訊素上下限 - **PERFORMANCE**: Optimized bounds checking
+        for (int i = 0; i < taskCount; i++) {
+            double[] pheromoneRow = pheromoneMatrix[i]; // **PERFORMANCE**: Cache row reference
+            for (int j = 0; j < processorCount; j++) {
+                if (pheromoneRow[j] > tau_max) {
+                    pheromoneRow[j] = tau_max;
+                } else if (pheromoneRow[j] < tau_min) {
+                    pheromoneRow[j] = tau_min;
                 }
             }
         }

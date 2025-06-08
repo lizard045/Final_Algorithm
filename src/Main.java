@@ -34,7 +34,7 @@ public class Main {
         Map<String, ExperimentResult> finalResults = new LinkedHashMap<>();
         
         // --- ACO Strategy ---
-        final int NUM_ANTS = 60; // **ENHANCED**: Increased from 50 to 60 for better exploration
+        final int NUM_ANTS = 55; // **ENHANCED**: Increased from 50 to 60 for better exploration
         final int ACO_GENERATIONS = 200;
         final double ALPHA = 0.8; // **ENHANCED**: Reduced from 1.0 to give more weight to heuristic
         final double BETA = 2.5;  // **ENHANCED**: Increased from 2.0 to leverage enhanced heuristic

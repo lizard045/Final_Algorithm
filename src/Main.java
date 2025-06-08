@@ -1,5 +1,8 @@
 import aco.ACO;
 import core.Schedule;
+import java.io.FileWriter;
+import java.io.IOException;
+import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -35,8 +38,8 @@ public class Main {
         final int ACO_GENERATIONS = 200;
         final double ALPHA = 1.0; // Pheromone importance
         final double BETA = 2.0;  // Heuristic importance
-        final double EVAPORATION_RATE = 0.5;
-        final double LOCAL_SEARCH_RATE_ACO = 0.3; 
+        final double EVAPORATION_RATE = 0.2;
+        final double LOCAL_SEARCH_RATE_ACO = 0.1; 
 
         for (String dagFile : dagFiles) {
             System.out.println("==========================================================");
@@ -73,6 +76,11 @@ public class Main {
 
                 System.out.printf("Run %d finished in %.2f seconds. Best makespan: %.2f\n", 
                                   i + 1, runTime, bestSchedule != null ? bestSchedule.getMakespan() : -1.0);
+
+                // **NEW**: Write convergence data for the first run to a file
+                if (i == 0) {
+                    writeConvergenceDataToFile(dagFile + ".convergence.csv", aco.getConvergenceData());
+                }
             }
 
             ExperimentResult result = new ExperimentResult(bestResults, totalRunningTime / RUN_COUNT);
@@ -81,6 +89,23 @@ public class Main {
         }
 
         printFinalSummary(finalResults);
+    }
+
+    /**
+     * **NEW**: Writes the convergence data to a CSV file.
+     * @param filename The name of the file to write to.
+     * @param data The list of makespan values from each generation.
+     */
+    private static void writeConvergenceDataToFile(String filename, List<Double> data) {
+        try (PrintWriter out = new PrintWriter(new FileWriter(filename))) {
+            System.out.println("Writing convergence data to " + filename);
+            out.println("Generation,Makespan");
+            for (int i = 0; i < data.size(); i++) {
+                out.printf("%d,%.2f\n", i + 1, data.get(i));
+            }
+        } catch (IOException e) {
+            System.err.println("Error writing convergence data to file: " + e.getMessage());
+        }
     }
 
     private static void printStatistics(String dagFile, ExperimentResult result) {

@@ -8,20 +8,17 @@ import java.util.*;
 public class Heuristics {
 
     /**
-     * 計算任務的向上排名 (Upward Rank) 並返回排序後的任務列表
-     * @param dag The DAG object
-     * @return A list of tasks sorted by their upward rank in descending order.
+     * **NEW for Ant**: Calculates the upward rank for each task.
+     * The upward rank of a task is the critical path length from that task to an exit task,
+     * including the computation cost of the task itself.
+     * @param dag The DAG.
+     * @return An array of upward ranks, indexed by task ID.
      */
-    public static List<Task> getRankedTasks(DAG dag) {
-        // 檢查快取
-        if (dag.getRankedTasksCache() != null) {
-            return dag.getRankedTasksCache();
-        }
-
+    public static double[] calculateUpwardRanks(DAG dag) {
         int taskCount = dag.getTaskCount();
         int processorCount = dag.getProcessorCount();
         
-        // 1. 計算任務的平均計算成本
+        // 1. Calculate average computation costs for all tasks
         double[] avgComputationCosts = new double[taskCount];
         for (int i = 0; i < taskCount; i++) {
             double sum = 0;
@@ -31,37 +28,42 @@ public class Heuristics {
             avgComputationCosts[i] = sum / processorCount;
         }
 
-        // 2. 計算任務的向上排名 (Upward Rank)
+        // 2. Calculate upward ranks by traversing tasks in reverse topological order
         double[] upwardRanks = new double[taskCount];
         List<Integer> topologicalOrder = dag.getTopologicalOrder();
-        Collections.reverse(topologicalOrder); // 從出口任務開始
+        Collections.reverse(topologicalOrder); // From exit tasks to entry tasks
 
         for (int taskId : topologicalOrder) {
             Task task = dag.getTask(taskId);
             double maxSuccessorRank = 0;
             for (int successorId : task.getSuccessors()) {
+                // Calculate average communication cost
                 double avgCommCost = 0;
                 int dataVolume = task.getDataTransferVolume(successorId);
                 if (dataVolume > 0) {
-                    double totalCommRate = 0;
-                    int pairs = 0;
-                    for (int p1 = 0; p1 < processorCount; p1++) {
-                        for (int p2 = 0; p2 < processorCount; p2++) {
-                           if(p1 != p2) {
-                               totalCommRate += dag.getCommunicationRates()[p1][p2];
-                               pairs++;
-                           }
-                        }
-                    }
-                    if (pairs > 0) {
-                         double avgCommRate = totalCommRate / pairs;
-                         avgCommCost = dataVolume * avgCommRate;
-                    }
+                    // This is a simplified avg comm cost, assuming non-zero transfer rates
+                    avgCommCost = dataVolume * dag.getAverageCommunicationRate();
                 }
                 maxSuccessorRank = Math.max(maxSuccessorRank, avgCommCost + upwardRanks[successorId]);
             }
             upwardRanks[taskId] = avgComputationCosts[taskId] + maxSuccessorRank;
         }
+        return upwardRanks;
+    }
+
+    /**
+     * 計算任務的向上排名 (Upward Rank) 並返回排序後的任務列表
+     * @param dag The DAG object
+     * @return A list of tasks sorted by their upward rank in descending order.
+     */
+    public static List<Task> getRankedTasks(DAG dag) {
+        // 檢查快取
+        if (dag.getRankedTasksCache() != null) {
+            return dag.getRankedTasksCache();
+        }
+        
+        // **NEW**: Use the dedicated method for rank calculation
+        double[] upwardRanks = calculateUpwardRanks(dag);
 
         // 3. 根據向上排名對任務進行排序
         List<Task> rankedTasks = new ArrayList<>(dag.getTasks());

@@ -5,6 +5,7 @@ import core.Heuristics;
 import core.Schedule;
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Random;
 
@@ -24,6 +25,9 @@ public class ACO {
 
     private Schedule bestSchedule;
     private final Random random = new Random();
+
+    // **NEW**: To store convergence data
+    private List<Double> convergenceData;
 
     // --- MMAS Parameters ---
     private double tau_max;
@@ -48,6 +52,7 @@ public class ACO {
         this.localSearchRate = localSearchRate;
         
         this.pheromoneMatrix = new double[dag.getTaskCount()][dag.getProcessorCount()];
+        this.convergenceData = new ArrayList<>();
     }
 
     private void initializePheromones() {
@@ -60,51 +65,58 @@ public class ACO {
     }
 
     public Schedule run() {
-        // 1. 產生初始解以計算 tau_max
-        bestSchedule = Heuristics.createPeftSchedule(dag);
-        System.out.printf("Initial Best Makespan (PEFT): %.2f\n", bestSchedule.getMakespan());
+        // 1. 產生初始解以計算 tau_max，但不將其設為全域最佳解
+        Schedule initialHeuristicSchedule = Heuristics.createPeftSchedule(dag);
+        System.out.printf("Initial Heuristic Makespan (PEFT): %.2f\n", initialHeuristicSchedule.getMakespan());
         
         // 2. 初始化 MMAS 參數
-        tau_max = 1.0 / (evaporationRate * bestSchedule.getMakespan());
+        tau_max = 1.0 / (evaporationRate * initialHeuristicSchedule.getMakespan());
         // 根據文獻，為 tau_min 設定一個合理的計算方式
         double p_best = Math.pow(1.0 / dag.getTaskCount(), 1.0 / dag.getTaskCount());
         tau_min = tau_max * (1 - p_best) / ((double)(dag.getTaskCount() / 2 - 1) * p_best);
 
         System.out.printf("MMAS Params: tau_max=%.4f, tau_min=%.4f\n", tau_max, tau_min);
 
+        // **NEW**: ACO 的搜尋從 null 開始，不使用 PEFT 作為起點
+        bestSchedule = null; 
+
         // 3. 初始化資訊素矩陣
         initializePheromones();
 
         for (int gen = 0; gen < generations; gen++) {
             List<Ant> ants = createAnts();
-            Schedule iterationBestSchedule = null;
             
-            // 記錄本代開始前的最佳Makespan，用於偵測停滯
-            double makespanBeforeGeneration = bestSchedule.getMakespan();
-
             for (Ant ant : ants) {
                 ant.constructSolution(dag, pheromoneMatrix, alpha, beta);
-                
-                if (random.nextDouble() < this.localSearchRate) {
-                    ant.getSchedule().criticalPathLocalSearch();
-                }
-
-                if (iterationBestSchedule == null || ant.getSchedule().getMakespan() < iterationBestSchedule.getMakespan()) {
-                    iterationBestSchedule = ant.getSchedule();
-                }
             }
 
-            // 與全域最佳解比較
-            if (iterationBestSchedule != null && bestSchedule.getMakespan() > iterationBestSchedule.getMakespan()) {
+            // --- Apply local search to the top N ants of the iteration ---
+            ants.sort(Comparator.comparingDouble(a -> a.getSchedule().getMakespan()));
+            int numToSearch = (int) (numAnts * localSearchRate);
+            for (int i = 0; i < numToSearch; i++) {
+                ants.get(i).getSchedule().criticalPathLocalSearch();
+            }
+
+            // Find iteration best after local search
+            Schedule iterationBestSchedule = ants.get(0).getSchedule();
+
+            // 與全域最佳解比較 (處理 bestSchedule 初始化為 null 的情況)
+            if (bestSchedule == null || iterationBestSchedule.getMakespan() < bestSchedule.getMakespan()) {
                 bestSchedule = new Schedule(iterationBestSchedule);
+                stagnationCounter = 0; // Found a better solution, reset counter
+            } else {
+                 stagnationCounter++;
             }
 
-            // 4. 更新資訊素 (MMAS 核心)
+            // 4. **REVERT**: 更新資訊素改用「當代最佳解」，以增加探索
             updatePheromones(iterationBestSchedule);
 
-            // 5. **NEW**: 處理停滯
-            handleStagnation(makespanBeforeGeneration);
+            // 5. 處理停滯
+            handleStagnation();
             
+            // Record data for convergence curve
+            convergenceData.add(bestSchedule.getMakespan());
+
             System.out.printf("Generation %d: Iteration Best=%.2f, Global Best=%.2f, Stagnation=%d/%d\n",
                     gen + 1, iterationBestSchedule.getMakespan(), bestSchedule.getMakespan(), stagnationCounter, STAGNATION_LIMIT);
         }
@@ -156,15 +168,8 @@ public class ACO {
 
     /**
      * **NEW**: 處理停滯，如果需要則重置資訊素
-     * @param bestMakespanBeforeUpdate 在本代更新前的最佳 makespan
      */
-    private void handleStagnation(double bestMakespanBeforeUpdate) {
-        if (bestSchedule.getMakespan() >= bestMakespanBeforeUpdate) {
-            stagnationCounter++;
-        } else {
-            stagnationCounter = 0; // Found a better solution, reset counter
-        }
-
+    private void handleStagnation() {
         if (stagnationCounter >= STAGNATION_LIMIT) {
             System.out.printf("  -> Stagnation detected! Resetting pheromones to tau_max (%.4f).\n", tau_max);
             initializePheromones();
@@ -174,5 +179,13 @@ public class ACO {
 
     public Schedule getBestSchedule() {
         return bestSchedule;
+    }
+
+    /**
+     * **NEW**: Returns the convergence data.
+     * @return A list of the best makespan found at each generation.
+     */
+    public List<Double> getConvergenceData() {
+        return convergenceData;
     }
 } 

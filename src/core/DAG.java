@@ -190,6 +190,26 @@ public class DAG {
     public boolean isHomogeneous() { return isHomogeneous; }
     public double[][] getCommunicationRates() { return communicationRates; }
     
+    /**
+     * **NEW**: Calculates the average communication rate between any two different processors.
+     * @return The average communication rate.
+     */
+    public double getAverageCommunicationRate() {
+        double totalCommRate = 0;
+        int pairs = 0;
+        if (communicationRates != null) {
+            for (int p1 = 0; p1 < processorCount; p1++) {
+                for (int p2 = 0; p2 < processorCount; p2++) {
+                    if (p1 != p2) {
+                        totalCommRate += communicationRates[p1][p2];
+                        pairs++;
+                    }
+                }
+            }
+        }
+        return (pairs > 0) ? totalCommRate / pairs : 0;
+    }
+    
     // --- 新增的快取相關方法 ---
     public double[][] getOctCache() {
         return this.octCache;

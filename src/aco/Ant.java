@@ -1,7 +1,6 @@
 package aco;
 
 import core.DAG;
-import core.Heuristics;
 import core.Processor;
 import core.Schedule;
 import java.util.*;
@@ -38,9 +37,6 @@ public class Ant {
     public void constructSolution(DAG dag, double[][] pheromoneMatrix, double alpha, double beta) {
         int taskCount = dag.getTaskCount();
         int processorCount = dag.getProcessorCount();
-
-        // **NEW**: Pre-calculate upward ranks
-        // final double[] upwardRanks = Heuristics.calculateUpwardRanks(dag);
 
         // 用於追蹤調度建構過程的狀態
         int[] processorAssignments = new int[taskCount];
@@ -104,11 +100,10 @@ public class Ant {
             for (int pId = 0; pId < dag.getProcessorCount(); pId++) {
                 double pheromone = Math.pow(pheromoneMatrix[taskId][pId], alpha);
 
-                // 啟發式資訊: 結合了任務排名和EFT
+                // 啟發式資訊: 恢復為簡單的 1/EFT
                 double eft = calculateEFT(taskId, pId, dag, processors, currentAssignments, taskFinishTimes);
                 if (eft == 0) eft = 0.0001; // Avoid division by zero
 
-                // Temporarily simplified heuristic
                 double heuristic = 1.0 / eft;
                 
                 double desirability = pheromone * Math.pow(heuristic, beta);
@@ -171,4 +166,4 @@ public class Ant {
     public Schedule getSchedule() {
         return schedule;
     }
-} 
+}

@@ -95,8 +95,8 @@ public class ACO {
             }
 
             // 與全域最佳解比較
-            if (iterationBestSchedule != null && iterationBestSchedule.getMakespan() < bestSchedule.getMakespan()) {
-                bestSchedule = iterationBestSchedule.clone();
+            if (iterationBestSchedule != null && bestSchedule.getMakespan() > iterationBestSchedule.getMakespan()) {
+                bestSchedule = new Schedule(iterationBestSchedule);
             }
 
             // 4. 更新資訊素 (MMAS 核心)

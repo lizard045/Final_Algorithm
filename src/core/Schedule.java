@@ -7,15 +7,14 @@ import java.util.stream.Collectors;
  * Schedule類別：表示一個調度方案
  * 包含任務到處理器的分配和適應度計算
  */
-public class Schedule implements Cloneable {
+public class Schedule {
     private int[] chromosome; // 染色體：chromosome[i] = j 表示任務i分配給處理器j
     private List<Integer> taskOrder; // 排序染色體：任務的執行順序
     private double makespan; // 總完成時間（適應度值）
-    boolean isEvaluated; // 將可見性改為 package-private 以便GA存取
+    private boolean isEvaluated;
     private DAG dag; // DAG參考
 
     // 用於追蹤關鍵路徑
-    // Map<Integer, Integer> child -> parent (-1 if no parent)
     private Map<Integer, Integer> criticalPathLinks; 
     
     public Schedule(DAG dag) {
@@ -24,36 +23,6 @@ public class Schedule implements Cloneable {
         this.makespan = 0.0;
         this.isEvaluated = false;
         this.criticalPathLinks = new HashMap<>();
-    }
-    
-    /**
-     * **NEW**: 產生一個此排程的唯一標識符，用於快取。
-     * @return 代表此排程的唯一字串鍵。
-     */
-    public String getCacheKey() {
-        // 確保順序是合法的，這樣相同的邏輯狀態才能產生相同的鍵
-        if (!isEvaluated) {
-            evaluateFitness();
-        }
-        StringBuilder sb = new StringBuilder();
-        sb.append(Arrays.toString(chromosome));
-        sb.append(':');
-        // taskOrder might be null before the first evaluation
-        if (taskOrder != null) {
-            for (Integer taskId : taskOrder) {
-                sb.append(taskId).append(',');
-            }
-        }
-        return sb.toString();
-    }
-    
-    /**
-     * **NEW**: 手動設定 makespan，主要用於從快取中恢復狀態。
-     * @param makespan 要設定的 makespan 值。
-     */
-    public void setMakespan(double makespan) {
-        this.makespan = makespan;
-        this.isEvaluated = true; // 當手動設定makespan時，也應將其視為已評估
     }
     
     public Schedule(DAG dag, int[] assignment) {
@@ -79,18 +48,12 @@ public class Schedule implements Cloneable {
         this.taskOrder = (other.taskOrder != null) ? new ArrayList<>(other.taskOrder) : null;
         this.makespan = other.makespan;
         this.isEvaluated = other.isEvaluated;
-        // 注意：criticalPathLinks是基於計算的結果，淺拷貝即可，因為每次evaluate都會重建
         this.criticalPathLinks = new HashMap<>(other.criticalPathLinks);
     }
     
-    /**
-     * 隨機初始化任務分配
-     */
-    public void randomInitialize(Random random) {
-        for (int i = 0; i < chromosome.length; i++) {
-            chromosome[i] = random.nextInt(dag.getProcessorCount());
-        }
-        isEvaluated = false;
+    public void setMakespan(double makespan) {
+        this.makespan = makespan;
+        this.isEvaluated = true;
     }
     
     /**
@@ -108,9 +71,7 @@ public class Schedule implements Cloneable {
 
         this.criticalPathLinks.clear();
 
-        // **恢復**：直接使用 taskOrder，因為它是由HEFT提供且固定的
         if (this.taskOrder == null || this.taskOrder.isEmpty()) {
-            // 這個備用方案理論上不應被觸發，但作為保護性程式碼保留
             this.taskOrder = Heuristics.getRankedTasks(dag).stream()
                                   .map(Task::getTaskId)
                                   .collect(Collectors.toList());
@@ -175,7 +136,6 @@ public class Schedule implements Cloneable {
 
     /**
      * 基於關鍵路徑的局部搜尋 (完整版)
-     * 會持續迭代直到找不到任何改進為止。
      */
     public void criticalPathLocalSearch() {
         boolean improvedInLoop;
@@ -189,7 +149,6 @@ public class Schedule implements Cloneable {
                 double bestMakespan = this.makespan;
                 int bestProcessor = originalProcessor;
 
-                // 嘗試將關鍵任務移動到其他處理器
                 for (int pId = 0; pId < dag.getProcessorCount(); pId++) {
                     if (pId == originalProcessor) continue;
 
@@ -203,12 +162,11 @@ public class Schedule implements Cloneable {
                     }
                 }
                 
-                // 無論是否找到更好的，都恢復到這個迴圈開始前的最佳狀態
                 chromosome[taskId] = bestProcessor;
                 
                 if (improvedInLoop) {
                     evaluateFitness(); // 更新狀態
-                    break; // 找到一個改進就立即重新開始，因為關鍵路徑可能已改變
+                    break; 
                 }
             }
         } while (improvedInLoop);
@@ -234,43 +192,6 @@ public class Schedule implements Cloneable {
         return path;
     }
 
-    /**
-     * 均勻交叉操作 (Uniform Crossover)
-     */
-    public static Schedule[] crossover(Schedule parent1, Schedule parent2, Random random) {
-        int length = parent1.chromosome.length;
-        
-        Schedule child1 = new Schedule(parent1.dag);
-        Schedule child2 = new Schedule(parent2.dag);
-        
-        for (int i = 0; i < length; i++) {
-            if (random.nextDouble() < 0.5) {
-                child1.chromosome[i] = parent1.chromosome[i];
-                child2.chromosome[i] = parent2.chromosome[i];
-            } else {
-                child1.chromosome[i] = parent2.chromosome[i];
-                child2.chromosome[i] = parent1.chromosome[i];
-            }
-        }
-        
-        child1.isEvaluated = false;
-        child2.isEvaluated = false;
-        
-        return new Schedule[]{child1, child2};
-    }
-
-    /**
-     * 突變操作
-     */
-    public void mutate(Random random, double mutationRate) {
-        for (int i = 0; i < chromosome.length; i++) {
-            if (random.nextDouble() < mutationRate) {
-                chromosome[i] = random.nextInt(dag.getProcessorCount());
-                isEvaluated = false;
-            }
-        }
-    }
-    
     // Getters and Setters
     public int[] getChromosome() {
         return chromosome;
@@ -282,7 +203,7 @@ public class Schedule implements Cloneable {
 
     public void setTaskOrder(List<Integer> taskOrder) {
         this.taskOrder = taskOrder;
-        this.isEvaluated = false; // 順序改變，需要重新評估
+        this.isEvaluated = false; 
     }
     
     public double getMakespan() {
@@ -312,37 +233,10 @@ public class Schedule implements Cloneable {
         return sb.toString();
     }
 
-    public boolean isEvaluated() {
-        return isEvaluated;
-    }
-
-    /**
-     * **NEW for ACO**: Gets the processor assignment for a specific task.
-     * @param taskId The ID of the task.
-     * @return The ID of the processor the task is assigned to.
-     */
     public int getProcessorForTask(int taskId) {
         if (taskId >= 0 && taskId < chromosome.length) {
             return chromosome[taskId];
         }
         return -1; // Return -1 for invalid task ID
-    }
-
-    // Public clone method
-    @Override
-    public Schedule clone() {
-        try {
-            Schedule cloned = (Schedule) super.clone();
-            // The chromosome array needs to be deep-copied
-            cloned.chromosome = Arrays.copyOf(this.chromosome, this.chromosome.length);
-            // The taskOrder list also needs to be deep-copied
-            if (this.taskOrder != null) {
-                cloned.taskOrder = new ArrayList<>(this.taskOrder);
-            }
-            cloned.criticalPathLinks = new HashMap<>(this.criticalPathLinks);
-            return cloned;
-        } catch (CloneNotSupportedException e) {
-            throw new AssertionError(); // Should not happen
-        }
     }
 } 

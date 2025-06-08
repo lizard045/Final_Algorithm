@@ -39,9 +39,10 @@ public class Ant {
         int taskCount = dag.getTaskCount();
         int processorCount = dag.getProcessorCount();
 
-        // 預先計算向上排名，作為核心啟發式資訊
-        double[] upwardRanks = Heuristics.calculateUpwardRanks(dag);
+        // **NEW**: Pre-calculate upward ranks
+        // final double[] upwardRanks = Heuristics.calculateUpwardRanks(dag);
 
+        // 用於追蹤調度建構過程的狀態
         int[] processorAssignments = new int[taskCount];
         Arrays.fill(processorAssignments, -1);
         List<Integer> constructedTaskOrder = new ArrayList<>();
@@ -66,7 +67,7 @@ public class Ant {
             }
 
             // *** 核心步驟: 從所有可能的 (任務, 處理器) 組合中選擇最佳的一個 ***
-            Candidate bestCandidate = selectNextMove(readyTasks, dag, pheromoneMatrix, alpha, beta, processors, processorAssignments, taskFinishTimes, upwardRanks);
+            Candidate bestCandidate = selectNextMove(readyTasks, dag, pheromoneMatrix, alpha, beta, processors, processorAssignments, taskFinishTimes);
             int currentTaskId = bestCandidate.taskId;
             int bestProcessorId = bestCandidate.processorId;
 
@@ -95,31 +96,38 @@ public class Ant {
     /**
      * 全局輪盤賭選擇，從所有可行的 (任務, 處理器) 組合中選出下一步。
      */
-    private Candidate selectNextMove(List<Integer> readyTasks, DAG dag, double[][] pheromoneMatrix, double alpha, double beta, Processor[] processors, int[] currentAssignments, double[] taskFinishTimes, double[] upwardRanks) {
+    private Candidate selectNextMove(List<Integer> readyTasks, DAG dag, double[][] pheromoneMatrix, double alpha, double beta, Processor[] processors, int[] currentAssignments, double[] taskFinishTimes) {
         List<Candidate> candidates = new ArrayList<>();
         double totalDesirability = 0.0;
 
         for (int taskId : readyTasks) {
             for (int pId = 0; pId < dag.getProcessorCount(); pId++) {
                 double pheromone = Math.pow(pheromoneMatrix[taskId][pId], alpha);
-                
-                // 複合啟發式資訊
-                double eft = calculateEFT(taskId, pId, dag, processors, currentAssignments, taskFinishTimes);
-                double rank = upwardRanks[taskId];
-                
-                // 避免除以零
-                if (eft == 0) eft = 0.0001;
-                if (rank == 0) rank = 0.0001;
 
-                double heuristic = Math.pow(rank, beta) * Math.pow(1.0 / eft, beta);
+                // 啟發式資訊: 結合了任務排名和EFT
+                double eft = calculateEFT(taskId, pId, dag, processors, currentAssignments, taskFinishTimes);
+                if (eft == 0) eft = 0.0001; // Avoid division by zero
+
+                // Temporarily simplified heuristic
+                double heuristic = 1.0 / eft;
                 
-                double desirability = pheromone * heuristic;
-                candidates.add(new Candidate(taskId, pId, desirability));
-                totalDesirability += desirability;
+                double desirability = pheromone * Math.pow(heuristic, beta);
+
+                if (Double.isFinite(desirability)) {
+                    Candidate candidate = new Candidate(taskId, pId, desirability);
+                    candidates.add(candidate);
+                    totalDesirability += desirability;
+                }
             }
         }
 
         // 輪盤賭選擇
+        if (totalDesirability == 0 || candidates.isEmpty()) {
+            // Fallback: choose a random ready task and assign to a random processor
+            int randomTask = readyTasks.get(random.nextInt(readyTasks.size()));
+            return new Candidate(randomTask, random.nextInt(dag.getProcessorCount()), 0);
+        }
+
         double roll = random.nextDouble() * totalDesirability;
         double cumulative = 0.0;
         for (Candidate c : candidates) {
@@ -129,8 +137,7 @@ public class Ant {
             }
         }
         
-        // Fallback
-        return candidates.get(random.nextInt(candidates.size()));
+        return candidates.get(random.nextInt(candidates.size())); // Fallback
     }
     
     /**

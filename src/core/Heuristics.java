@@ -74,51 +74,6 @@ public class Heuristics {
     }
 
     /**
-     * **NEW**: 獨立計算並返回所有任務的向上排名(Upward Rank)。
-     * 向上排名是任務調度中一個關鍵的啟發式指標。
-     * @param dag The DAG object
-     * @return A double array where the index is the task ID and the value is the upward rank.
-     */
-    public static double[] calculateUpwardRanks(DAG dag) {
-        int taskCount = dag.getTaskCount();
-        int processorCount = dag.getProcessorCount();
-        
-        // 1. 計算平均計算成本
-        double[] avgComputationCosts = new double[taskCount];
-        for (int i = 0; i < taskCount; i++) {
-            double sum = 0;
-            for (int j = 0; j < processorCount; j++) {
-                sum += dag.getTask(i).getComputationCost(j);
-            }
-            avgComputationCosts[i] = sum / processorCount;
-        }
-
-        // 2. 計算向上排名
-        double[] upwardRanks = new double[taskCount];
-        List<Integer> topologicalOrder = dag.getTopologicalOrder();
-        Collections.reverse(topologicalOrder); // 從出口任務開始
-
-        for (int taskId : topologicalOrder) {
-            Task task = dag.getTask(taskId);
-            double maxSuccessorRank = 0;
-            for (int successorId : task.getSuccessors()) {
-                // 在我們的模型中，通訊成本的計算比較複雜，此處簡化為平均通訊成本
-                // 實際應用中可根據需求調整
-                int dataVolume = task.getDataTransferVolume(successorId);
-                double avgCommCost = 0;
-                if (dataVolume > 0) {
-                    // 簡化的平均通訊成本估算
-                    avgCommCost = dataVolume * Arrays.stream(dag.getCommunicationRates()).flatMapToDouble(Arrays::stream).average().orElse(0.0);
-                }
-                maxSuccessorRank = Math.max(maxSuccessorRank, avgCommCost + upwardRanks[successorId]);
-            }
-            upwardRanks[taskId] = avgComputationCosts[taskId] + maxSuccessorRank;
-        }
-        
-        return upwardRanks;
-    }
-
-    /**
      * **NEW for ACO**: Gets a list of task IDs sorted by upward rank.
      * @param dag The DAG object
      * @return A list of task IDs sorted by their upward rank.
@@ -196,50 +151,6 @@ public class Heuristics {
         schedule.setMakespan(taskFinishTimes[taskOrder.get(taskOrder.size() - 1)]);
         
         return schedule;
-    }
-
-    /**
-     * Performs Path-Relinking between a source and a guiding schedule.
-     * This method explores the trajectory from the source to the guiding solution,
-     * applying an intensive local search at each step to find better intermediate solutions.
-     *
-     * @param source The starting schedule for the relinking path.
-     * @param guiding The target schedule that guides the search.
-     * @return The best schedule found along the path from source to guiding.
-     */
-    public static Schedule pathRelinking(Schedule source, Schedule guiding) {
-        Schedule current = source.clone();
-        Schedule bestFound = source.clone();
-        bestFound.evaluateFitness();
-
-        int[] currentChromosome = current.getChromosome();
-        int[] guidingChromosome = guiding.getChromosome();
-        
-        // Find differences between the two chromosomes
-        List<Integer> diffIndices = new ArrayList<>();
-        for (int i = 0; i < currentChromosome.length; i++) {
-            if (currentChromosome[i] != guidingChromosome[i]) {
-                diffIndices.add(i);
-            }
-        }
-
-        // Traverse the path in a random order to avoid bias
-        Collections.shuffle(diffIndices);
-
-        for (int indexToChange : diffIndices) {
-            // Move one step along the path
-            currentChromosome[indexToChange] = guidingChromosome[indexToChange];
-            
-            // **恢復**：在中間解上執行完整的、高強度的局部搜尋
-            current.evaluateFitness();
-            current.criticalPathLocalSearch();
-
-            if (current.getMakespan() < bestFound.getMakespan()) {
-                bestFound = current.clone();
-            }
-        }
-        
-        return bestFound;
     }
 
     // --- PEFT Implementation ---

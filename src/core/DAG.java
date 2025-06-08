@@ -15,7 +15,6 @@ public class DAG {
     private List<Task> tasks; // 任務列表
     private boolean isHomogeneous; // 是否為同質性系統
     private List<Task> rankedTasksCache = null; // 快取欄位
-    private boolean[][] reachabilityMatrix; // **NEW**: 可達性矩陣
     private double[][] octCache = null; // **NEW**: OCT 快取欄位
     
     public DAG() {
@@ -49,8 +48,6 @@ public class DAG {
             
             // 解析數據
             parseDataLines(dataLines);
-            // **NEW**: 計算可達性
-            computeReachability();
             
         } finally {
             reader.close();
@@ -125,40 +122,6 @@ public class DAG {
         for (int i = 0; i < taskCount; i++) {
             tasks.add(new Task(i, processorCount));
         }
-    }
-    
-    /**
-     * **NEW**: 計算可達性矩陣 (Transitive Closure)
-     * 使用 Floyd-Warshall 演算法來判斷任務間的依賴關係
-     */
-    private void computeReachability() {
-        reachabilityMatrix = new boolean[taskCount][taskCount];
-        // 初始化：直接相連的任務是可達的
-        for (int i = 0; i < taskCount; i++) {
-            for (int successorId : tasks.get(i).getSuccessors()) {
-                reachabilityMatrix[i][successorId] = true;
-            }
-        }
-        // Floyd-Warshall 演算法
-        for (int k = 0; k < taskCount; k++) {
-            for (int i = 0; i < taskCount; i++) {
-                for (int j = 0; j < taskCount; j++) {
-                    if (reachabilityMatrix[i][k] && reachabilityMatrix[k][j]) {
-                        reachabilityMatrix[i][j] = true;
-                    }
-                }
-            }
-        }
-    }
-    
-    /**
-     * **NEW**: 檢查一個任務是否是另一個任務的後繼（無論直接或間接）
-     */
-    public boolean isReachable(int fromTaskId, int toTaskId) {
-        if (fromTaskId < 0 || fromTaskId >= taskCount || toTaskId < 0 || toTaskId >= taskCount) {
-            return false;
-        }
-        return reachabilityMatrix[fromTaskId][toTaskId];
     }
     
     /**

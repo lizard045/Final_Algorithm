@@ -30,25 +30,13 @@ public class Main {
         String[] dagFiles = {"n4_00.dag", "n4_02.dag", "n4_04.dag", "n4_06.dag"};
         Map<String, ExperimentResult> finalResults = new LinkedHashMap<>();
         
-        // --- GA Strategy: Island Model with On-Demand Path-Relinking ---
-        /*
-        final int NUM_ISLANDS = 8;
-        final int TOTAL_GENERATIONS = 800;
-        final int MIGRATION_SIZE = 3;      // Number of elites for migration
-        
-        // Per-island configuration
-        final int POPULATION_PER_ISLAND = 60; 
-        final double MUTATION_RATE = 0.2;
-        final double LOCAL_SEARCH_RATE = 0.7;
-        */
-
-        // --- New ACO Strategy ---
+        // --- ACO Strategy ---
         final int NUM_ANTS = 50;
         final int ACO_GENERATIONS = 200;
         final double ALPHA = 1.0; // Pheromone importance
         final double BETA = 2.0;  // Heuristic importance
         final double EVAPORATION_RATE = 0.5;
-        final double LOCAL_SEARCH_RATE_ACO = 0.3; // **NEW for ACO Local Search**
+        final double LOCAL_SEARCH_RATE_ACO = 0.3; 
 
         for (String dagFile : dagFiles) {
             System.out.println("==========================================================");
@@ -63,20 +51,6 @@ public class Main {
                 System.out.println("\n--- Run " + (i + 1) + "/" + RUN_COUNT + " ---");
                 long startTime = System.currentTimeMillis();
                 
-                // --- GA Run ---
-                /*
-                IslandModelGA islandGA = new IslandModelGA(
-                    NUM_ISLANDS,
-                    TOTAL_GENERATIONS,
-                    MIGRATION_SIZE,
-                    POPULATION_PER_ISLAND,
-                    MUTATION_RATE,
-                    LOCAL_SEARCH_RATE,
-                    dagFile
-                );
-                Schedule bestSchedule = islandGA.run();
-                */
-
                 // --- ACO Run ---
                 ACO aco = new ACO(
                     NUM_ANTS,
@@ -84,7 +58,7 @@ public class Main {
                     ALPHA,
                     BETA,
                     EVAPORATION_RATE,
-                    LOCAL_SEARCH_RATE_ACO, // **NEW**
+                    LOCAL_SEARCH_RATE_ACO, 
                     dagFile
                 );
                 Schedule bestSchedule = aco.run();
@@ -137,59 +111,4 @@ public class Main {
         }
         System.out.println("====================================================================================");
     }
-
-    /**
-     * 參數自動調優方法
-     * @param dagFile 要進行調優的DAG檔案
-     */
-    /*
-    public static void parameterTuning(String dagFile) {
-        System.out.println("Starting parameter tuning for: " + dagFile);
-
-        int[] populationSizes = {150};
-        int[] numGenerations = {300, 500};
-        double[] mutationRates = {0.10, 0.20, 0.30};
-        double[] localSearchRates = {0.30, 0.50, 0.70};
-        int numRunsPerSetting = 3;
-
-        double bestOverallMakespan = Double.MAX_VALUE;
-        String bestParams = "";
-
-        for (int popSize : populationSizes) {
-            for (int gens : numGenerations) {
-                for (double mutRate : mutationRates) {
-                    for (double lsRate : localSearchRates) {
-                        System.out.printf("\n[Testing] Pop: %d, Gen: %d, Mutation: %.2f, LocalSearch: %.2f\n",
-                                          popSize, gens, mutRate, lsRate);
-                        
-                        List<Double> runResults = new ArrayList<>();
-                        for (int i = 0; i < numRunsPerSetting; i++) {
-                            GA ga = new GA(popSize, gens, mutRate, lsRate, dagFile);
-                            Schedule result = ga.run();
-                            if (result != null) {
-                                runResults.add(result.getMakespan());
-                            }
-                        }
-                        
-                        // 修正評估邏輯：我們關心的是這組參數能達到的最好結果，而不是平均結果
-                        double bestMakespanInSet = runResults.stream().mapToDouble(d -> d).min().orElse(Double.MAX_VALUE);
-                        System.out.printf("  => Best Makespan in this set of %d runs: %.2f\n", numRunsPerSetting, bestMakespanInSet);
-
-                        if (bestMakespanInSet < bestOverallMakespan) {
-                            bestOverallMakespan = bestMakespanInSet;
-                            bestParams = String.format("Pop: %d, Gen: %d, Mutation: %.2f, LocalSearch: %.2f",
-                                                       popSize, gens, mutRate, lsRate);
-                        }
-                    }
-                }
-            }
-        }
-
-        System.out.println("\n=====================================================================================");
-        System.out.println("Tuning Complete for " + dagFile + ".");
-        System.out.println(">> Best Overall Makespan found: " + String.format("%.2f", bestOverallMakespan));
-        System.out.println(">> With parameters: " + bestParams);
-        System.out.println("=====================================================================================");
-    }
-    */
 }

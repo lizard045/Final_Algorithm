@@ -213,4 +213,12 @@ public class Ant {
     public Schedule getSchedule() {
         return schedule;
     }
+
+    /**
+     * **NEW**: Sets the schedule for this ant. Used for injecting solutions.
+     * @param schedule The new schedule.
+     */
+    public void setSchedule(Schedule schedule) {
+        this.schedule = schedule;
+    }
 }

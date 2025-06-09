@@ -36,9 +36,9 @@ public class Main {
         // --- ACO Strategy ---
         final int NUM_ANTS = 55; // **ENHANCED**: Increased from 50 to 60 for better exploration
         final int ACO_GENERATIONS = 200;
-        final double ALPHA = 0.8; // **ENHANCED**: Reduced from 1.0 to give more weight to heuristic
-        final double BETA = 2.5;  // **ENHANCED**: Increased from 2.0 to leverage enhanced heuristic
-        final double EVAPORATION_RATE = 0.2;
+        final double ALPHA = 1.0; // **MODIFIED for Stability**: Increased from 0.8 to balance against strong local search.
+        final double BETA = 2.0;  // **MODIFIED for Stability**: Reduced from 2.5 to decrease greedy heuristic influence.
+        final double EVAPORATION_RATE = 0.3; // **MODIFIED for Stability**: Increased from 0.2 to encourage exploration and avoid premature convergence.
         final double LOCAL_SEARCH_RATE_ACO = 0.3; // **ENHANCED**: Increased from 0.2 to 0.3
         final double EXPLOITATION_FACTOR_Q0 = 0.8; // **NEW**: Probability of making the best local choice
         final int NUM_RANKED_ANTS = 6; // **NEW**: Number of top ants to update pheromone

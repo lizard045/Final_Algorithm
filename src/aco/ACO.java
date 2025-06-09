@@ -50,8 +50,9 @@ public class ACO {
     private double lastBestMakespan = Double.MAX_VALUE;
     private static final int SOFT_STAGNATION_LIMIT = 25; // **REDUCED**: More responsive
     private static final int HARD_STAGNATION_LIMIT = 50; // **REDUCED**: Faster reset
-    private static final int CONVERGENCE_THRESHOLD = 15; // **NEW**: Stop if converged
+    private static final int CONVERGENCE_THRESHOLD = 30; // **NEW**: Stop if converged
     private static final double CONVERGENCE_TOLERANCE = 0.01; // **NEW**: Convergence sensitivity
+    private static final double MUTATION_RATE_ON_STAGNATION = 0.05; // **NEW**: Mutation rate for the best solution
     
     // **STABILITY**: Diversity protection
     private static final double MIN_DIVERSITY_THRESHOLD = 0.1;
@@ -111,6 +112,9 @@ public class ACO {
         initializePheromones();
 
         for (int gen = 0; gen < generations; gen++) {
+            // **NEW**: Dynamic elitist weight decay
+            double currentElitistWeight = this.elitistWeight * (1.0 - (double) gen / generations);
+
             List<Ant> ants = createAnts();
             
             // **STABILITY**: Use fixed random seed for each generation
@@ -120,62 +124,70 @@ public class ACO {
                 ant.constructSolution(dag, pheromoneMatrix, alpha, beta, q0, cachedUpwardRanks);
             }
 
-            // --- Apply local search to the top N ants of the iteration ---
+            // --- STRATEGY CHANGE: Decouple Local Search from population generation ---
+            // Sort ants by their raw constructed solution to find the best of this iteration.
             ants.sort(Comparator.comparingDouble(a -> a.getSchedule().getMakespan()));
-            int numToSearch = (int) (numAnts * localSearchRate);
-            for (int i = 0; i < numToSearch; i++) {
-                ants.get(i).getSchedule().criticalPathLocalSearch();
+            Schedule iterationBestAntSchedule = ants.get(0).getSchedule();
+
+            // Local search is now only applied to refine a new candidate for the global best solution.
+            boolean foundNewGlobalBest = false;
+            if (bestSchedule == null || iterationBestAntSchedule.getMakespan() < bestSchedule.getMakespan()) {
+                Schedule refinedCandidate = new Schedule(iterationBestAntSchedule);
+                refinedCandidate.criticalPathLocalSearch(); // Apply powerful LS to the promising candidate
+
+                if (bestSchedule == null || refinedCandidate.getMakespan() < bestSchedule.getMakespan()) {
+                    bestSchedule = refinedCandidate; // Update global best with the refined version
+                    foundNewGlobalBest = true;
+                    System.out.printf("  -> New global best found (after LS): %.2f\n", bestSchedule.getMakespan());
+                }
             }
 
-            // Find iteration best after local search
-            Schedule iterationBestSchedule = ants.get(0).getSchedule();
-
-            // **CONVERGENCE**: Check for convergence before updating best
-            boolean foundImprovement = false;
-            if (bestSchedule == null || iterationBestSchedule.getMakespan() < bestSchedule.getMakespan()) {
-                bestSchedule = new Schedule(iterationBestSchedule);
+            // Update stagnation and convergence counters based on whether a new global best was found.
+            if (foundNewGlobalBest) {
                 stagnationCounter = 0;
-                foundImprovement = true;
-                
                 // **CONVERGENCE**: Update tracking
-                if (Math.abs(iterationBestSchedule.getMakespan() - lastBestMakespan) < CONVERGENCE_TOLERANCE) {
+                if (Math.abs(bestSchedule.getMakespan() - lastBestMakespan) < CONVERGENCE_TOLERANCE) {
                     convergenceCounter++;
                 } else {
                     convergenceCounter = 0;
-                    lastBestMakespan = iterationBestSchedule.getMakespan();
+                    lastBestMakespan = bestSchedule.getMakespan();
                 }
-                
-                // Reset q0 to its initial value if it was lowered
+                 // Reset q0 to its initial value if it was lowered
                 if (this.q0 < this.initial_q0) {
                     this.q0 = this.initial_q0;
-                    System.out.printf("  -> New global best found! Resetting q0 to %.2f\n", this.q0);
+                    System.out.printf("  -> Resetting q0 to %.2f\n", this.q0);
                 }
             } else {
                 stagnationCounter++;
-                
-                // **CONVERGENCE**: Check if we're stuck at the same solution
-                if (Math.abs(iterationBestSchedule.getMakespan() - bestSchedule.getMakespan()) < CONVERGENCE_TOLERANCE) {
+                // Check if we are stuck near the same solution
+                if (bestSchedule != null && Math.abs(iterationBestAntSchedule.getMakespan() - bestSchedule.getMakespan()) < CONVERGENCE_TOLERANCE) {
                     convergenceCounter++;
                 } else {
                     convergenceCounter = 0;
                 }
             }
-
+            
             // **STABILITY**: Track recent best solutions for diversity analysis
-            recentBestSolutions[recentBestIndex] = new Schedule(iterationBestSchedule);
+            recentBestSolutions[recentBestIndex] = new Schedule(iterationBestAntSchedule);
             recentBestIndex = (recentBestIndex + 1) % recentBestSolutions.length;
 
-            // 4. 更新資訊素
-            updatePheromones(ants, bestSchedule);
+            // 4. 更新資訊素 (based on the original ant solutions)
+            updatePheromones(ants, bestSchedule, currentElitistWeight);
 
             // 5. **ENHANCED**: Advanced stagnation and diversity handling
-            handleAdvancedStagnation(ants);
+            Schedule mutatedSolution = handleAdvancedStagnation(ants);
             
+            // **NEW**: If stagnation produced a mutated solution, inject it into the next generation
+            if (mutatedSolution != null) {
+                // Replace the worst ant's schedule with the mutated one
+                ants.get(ants.size() - 1).setSchedule(mutatedSolution);
+            }
+
             // Record data for convergence curve
             convergenceData.add(bestSchedule.getMakespan());
 
-            System.out.printf("Generation %d: Iteration Best=%.2f, Global Best=%.2f, Stagnation=%d, Convergence=%d\n",
-                    gen + 1, iterationBestSchedule.getMakespan(), bestSchedule.getMakespan(), 
+            System.out.printf("Generation %d: Iteration Best (Ant)=%.2f, Global Best=%.2f, Stagnation=%d, Convergence=%d\n",
+                    gen + 1, iterationBestAntSchedule.getMakespan(), bestSchedule.getMakespan(), 
                     stagnationCounter, convergenceCounter);
 
             // **CONVERGENCE**: Early stopping if converged
@@ -201,8 +213,9 @@ public class ACO {
      * **REVISED**: Implements Rank-Based pheromone update.
      * @param sortedAnts The list of ants from the current generation, sorted by makespan.
      * @param globalBest The best solution found so far over all generations.
+     * @param currentElitistWeight The dynamic weight for the elitist ant.
      */
-    private void updatePheromones(List<Ant> sortedAnts, Schedule globalBest) {
+    private void updatePheromones(List<Ant> sortedAnts, Schedule globalBest, double currentElitistWeight) {
         int taskCount = dag.getTaskCount();
         int processorCount = dag.getProcessorCount();
         
@@ -233,7 +246,7 @@ public class ACO {
         
         // 3. 全域最佳解 (精英螞蟻) 貢獻資訊素
         if (globalBest != null) {
-            double contribution = this.elitistWeight * (1.0 / globalBest.getMakespan());
+            double contribution = currentElitistWeight * (1.0 / globalBest.getMakespan());
             for (int taskId = 0; taskId < taskCount; taskId++) {
                 int processorId = globalBest.getProcessorForTask(taskId);
                 if (processorId != -1) {
@@ -256,9 +269,9 @@ public class ACO {
     }
 
     /**
-     * **NEW**: Advanced stagnation handling with diversity protection.
+     * **NEW**: Advanced stagnation handling with diversity protection. Returns a mutated solution if hard stagnation is triggered.
      */
-    private void handleAdvancedStagnation(List<Ant> ants) {
+    private Schedule handleAdvancedStagnation(List<Ant> ants) {
         // **DIVERSITY**: Calculate population diversity
         double diversity = calculatePopulationDiversity(ants);
         
@@ -274,11 +287,17 @@ public class ACO {
             diversityCounter = 0;
         }
         
-        // Level 2: Hard Stagnation -> **MODIFIED**: Instead of a hard reset, force diversification.
+        // Level 2: Hard Stagnation -> **MODIFIED**: Force diversification AND mutate the best solution.
         if (stagnationCounter >= HARD_STAGNATION_LIMIT) {
-            System.out.printf("  -> Hard stagnation! Forcing diversification to escape local optima.\n");
+            System.out.printf("  -> Hard stagnation! Forcing diversification and mutating best solution.\n");
             forceDiversification();
             
+            // **NEW**: Mutate the global best schedule to inject new genetic material
+            Schedule mutatedBest = new Schedule(bestSchedule);
+            mutatedBest.mutate(MUTATION_RATE_ON_STAGNATION, random);
+            mutatedBest.evaluateFitness(); // Re-evaluate makespan after mutation
+            System.out.printf("  -> Mutated best solution from %.2f to %.2f\n", bestSchedule.getMakespan(), mutatedBest.getMakespan());
+
             // Also reset q0 to its initial value to start fresh
             if (this.q0 < this.initial_q0) {
                 this.q0 = this.initial_q0;
@@ -286,12 +305,14 @@ public class ACO {
             }
             stagnationCounter = 0; // Reset counter completely after action
             convergenceCounter = 0; // Reset convergence counter too
+            return mutatedBest;
         } 
         // Level 1: Soft Stagnation -> Adjust q0, triggers every SOFT_STAGNATION_LIMIT generations
         else if (stagnationCounter > 0 && stagnationCounter % SOFT_STAGNATION_LIMIT == 0) {
             this.q0 = Math.max(0.4, this.q0 * 0.9); // **ENHANCED**: More aggressive reduction
             System.out.printf("  -> Soft stagnation (Stagnation gens: %d)! Reducing q0 to %.4f.\n", stagnationCounter, this.q0);
         }
+        return null; // No mutation occurred
     }
 
     /**

@@ -251,4 +251,21 @@ public class Schedule {
         }
         return -1; // Return -1 for invalid task ID
     }
+
+    /**
+     * **NEW**: Mutates the schedule by reassigning a small number of tasks to random processors.
+     * This is used to escape local optima.
+     * @param mutationRate The probability of each task being mutated.
+     * @param random The random number generator to use.
+     */
+    public void mutate(double mutationRate, Random random) {
+        for (int i = 0; i < this.chromosome.length; i++) {
+            if (random.nextDouble() < mutationRate) {
+                this.chromosome[i] = random.nextInt(dag.getProcessorCount());
+            }
+        }
+        // After mutation, the schedule must be re-evaluated.
+        this.isEvaluated = false;
+        // The task order is not changed, only the assignment.
+    }
 } 

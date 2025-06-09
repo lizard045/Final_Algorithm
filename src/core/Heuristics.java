@@ -183,7 +183,8 @@ public class Heuristics {
 
         for (Task task : taskPriorityList) {
             int taskId = task.getTaskId();
-            double minEFT = Double.MAX_VALUE;
+            double minPredictedEFT = Double.MAX_VALUE;
+            double actualEFTForBestProcessor = -1.0;
             int bestProcessorId = -1;
 
             for (int pId = 0; pId < dag.getProcessorCount(); pId++) {
@@ -197,16 +198,21 @@ public class Heuristics {
                     dataReadyTime = Math.max(dataReadyTime, predFinishTime + commCost);
                 }
                 double est = Math.max(earliestReadyTime, dataReadyTime);
-                double eft = est + task.getComputationCost(pId) + oct[taskId][pId];
                 
-                if (eft < minEFT) {
-                    minEFT = eft;
+                // **CORRECTED LOGIC**: Use predicted EFT for decision making
+                double predictedEFT = est + task.getComputationCost(pId) + oct[taskId][pId];
+                
+                if (predictedEFT < minPredictedEFT) {
+                    minPredictedEFT = predictedEFT;
                     bestProcessorId = pId;
+                    // **CORRECTED LOGIC**: Store the *actual* EFT for the best choice found so far
+                    actualEFTForBestProcessor = est + task.getComputationCost(pId);
                 }
             }
             assignment[taskId] = bestProcessorId;
-            taskFinishTimes[taskId] = minEFT;
-            processors[bestProcessorId].setReadyTime(minEFT);
+            // **CORRECTED LOGIC**: Assign the *actual* finish time
+            taskFinishTimes[taskId] = actualEFTForBestProcessor; 
+            processors[bestProcessorId].setReadyTime(actualEFTForBestProcessor);
         }
 
         Schedule schedule = new Schedule(dag, assignment);

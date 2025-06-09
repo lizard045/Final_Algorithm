@@ -1,7 +1,6 @@
 package aco;
 
 import core.DAG;
-import core.Heuristics;
 import core.Processor;
 import core.Schedule;
 import java.util.*;

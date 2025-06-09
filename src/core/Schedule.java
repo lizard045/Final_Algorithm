@@ -136,40 +136,52 @@ public class Schedule {
 
     /**
      * 基於關鍵路徑的局部搜尋 (完整版)
+     * **MODIFIED**: Implemented with a "Best Improvement" strategy for better stability.
      */
     public void criticalPathLocalSearch() {
-        boolean improvedInLoop;
+        boolean improvementFound;
         do {
-            improvedInLoop = false;
+            improvementFound = false;
             evaluateFitness(); // 確保 makespan 和關鍵路徑是最新的
+            
             List<Integer> criticalPath = findCriticalPath();
+            if (criticalPath.isEmpty()) {
+                break; // No critical path found, nothing to optimize
+            }
 
+            double bestMakespanInNeighborhood = this.makespan;
+            int bestTaskToMove = -1;
+            int bestTargetProcessor = -1;
+
+            // --- Best Improvement Search: Find the single best move in the neighborhood ---
             for (int taskId : criticalPath) {
-                int originalProcessor = chromosome[taskId];
-                double bestMakespan = this.makespan;
-                int bestProcessor = originalProcessor;
+                int originalProcessor = this.chromosome[taskId];
 
                 for (int pId = 0; pId < dag.getProcessorCount(); pId++) {
                     if (pId == originalProcessor) continue;
 
-                    chromosome[taskId] = pId;
-                    double newMakespan = evaluateFitness();
+                    // Create a temporary schedule to evaluate the move
+                    Schedule tempSchedule = new Schedule(this);
+                    tempSchedule.chromosome[taskId] = pId;
+                    double newMakespan = tempSchedule.evaluateFitness();
 
-                    if (newMakespan < bestMakespan) {
-                        bestMakespan = newMakespan;
-                        bestProcessor = pId;
-                        improvedInLoop = true;
+                    if (newMakespan < bestMakespanInNeighborhood) {
+                        bestMakespanInNeighborhood = newMakespan;
+                        bestTaskToMove = taskId;
+                        bestTargetProcessor = pId;
                     }
                 }
-                
-                chromosome[taskId] = bestProcessor;
-                
-                if (improvedInLoop) {
-                    evaluateFitness(); // 更新狀態
-                    break; 
-                }
             }
-        } while (improvedInLoop);
+            
+            // --- Apply the best move found in the entire neighborhood scan ---
+            if (bestTaskToMove != -1) {
+                this.chromosome[bestTaskToMove] = bestTargetProcessor;
+                this.isEvaluated = false; // Mark for re-evaluation
+                evaluateFitness(); // Update schedule to the new best state
+                improvementFound = true;
+            }
+
+        } while (improvementFound);
     }
     
     /**

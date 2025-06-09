@@ -274,17 +274,17 @@ public class ACO {
             diversityCounter = 0;
         }
         
-        // Level 2: Hard Stagnation -> Reset Pheromones
+        // Level 2: Hard Stagnation -> **MODIFIED**: Instead of a hard reset, force diversification.
         if (stagnationCounter >= HARD_STAGNATION_LIMIT) {
-            System.out.printf("  -> Hard stagnation! Resetting pheromones to tau_max (%.4f).\n", tau_max);
-            initializePheromones();
+            System.out.printf("  -> Hard stagnation! Forcing diversification to escape local optima.\n");
+            forceDiversification();
             
             // Also reset q0 to its initial value to start fresh
             if (this.q0 < this.initial_q0) {
                 this.q0 = this.initial_q0;
                 System.out.printf("  -> Resetting q0 to %.2f\n", this.q0);
             }
-            stagnationCounter = 0; // Reset counter completely after hard reset
+            stagnationCounter = 0; // Reset counter completely after action
             convergenceCounter = 0; // Reset convergence counter too
         } 
         // Level 1: Soft Stagnation -> Adjust q0, triggers every SOFT_STAGNATION_LIMIT generations

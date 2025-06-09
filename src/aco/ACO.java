@@ -27,6 +27,7 @@ public class ACO {
     private final double elitistWeight;
     private final int numRankedAnts;
     private final double[][] pheromoneMatrix;
+    private final double pheromoneSmoothingFactor;
     
     private Schedule bestSchedule;
     // **STABILITY**: Fixed random seed for reproducible results
@@ -58,7 +59,7 @@ public class ACO {
     private static final double MIN_DIVERSITY_THRESHOLD = 0.1;
     private int diversityCounter = 0;
 
-    public ACO(int numAnts, int generations, double alpha, double beta, double evaporationRate, double localSearchRate, double q0, double elitistWeight, int numRankedAnts, String dagFile) {
+    public ACO(int numAnts, int generations, double alpha, double beta, double evaporationRate, double localSearchRate, double q0, double elitistWeight, int numRankedAnts, double pheromoneSmoothingFactor, String dagFile) {
         this.dag = new DAG();
         try {
             this.dag.loadFromFile(dagFile);
@@ -75,6 +76,7 @@ public class ACO {
         this.initial_q0 = q0;
         this.elitistWeight = elitistWeight;
         this.numRankedAnts = numRankedAnts;
+        this.pheromoneSmoothingFactor = pheromoneSmoothingFactor;
         
         this.pheromoneMatrix = new double[dag.getTaskCount()][dag.getProcessorCount()];
         this.convergenceData = new ArrayList<>();
@@ -145,6 +147,11 @@ public class ACO {
             // Update stagnation and convergence counters based on whether a new global best was found.
             if (foundNewGlobalBest) {
                 stagnationCounter = 0;
+
+                // **NEW ADAPTIVE CONTROL**: Improvement found, increase exploitation pressure.
+                this.q0 = Math.min(0.98, this.q0 / 0.95); // Increase q0, but cap it to avoid pure greediness.
+                System.out.printf("  -> Global best improved. Increasing q0 to %.4f\n", this.q0);
+
                 // **CONVERGENCE**: Update tracking
                 if (Math.abs(bestSchedule.getMakespan() - lastBestMakespan) < CONVERGENCE_TOLERANCE) {
                     convergenceCounter++;
@@ -266,6 +273,23 @@ public class ACO {
                 }
             }
         }
+
+        // 5. **NEW**: Pheromone Smoothing to proactively encourage exploration
+        if (pheromoneSmoothingFactor > 0) {
+            double totalPheromone = 0;
+            for (int i = 0; i < taskCount; i++) {
+                for (int j = 0; j < processorCount; j++) {
+                    totalPheromone += pheromoneMatrix[i][j];
+                }
+            }
+            double avgPheromone = totalPheromone / (taskCount * processorCount);
+            
+            for (int i = 0; i < taskCount; i++) {
+                for (int j = 0; j < processorCount; j++) {
+                    pheromoneMatrix[i][j] = (1.0 - pheromoneSmoothingFactor) * pheromoneMatrix[i][j] + pheromoneSmoothingFactor * avgPheromone;
+                }
+            }
+        }
     }
 
     /**
@@ -309,7 +333,8 @@ public class ACO {
         } 
         // Level 1: Soft Stagnation -> Adjust q0, triggers every SOFT_STAGNATION_LIMIT generations
         else if (stagnationCounter > 0 && stagnationCounter % SOFT_STAGNATION_LIMIT == 0) {
-            this.q0 = Math.max(0.4, this.q0 * 0.9); // **ENHANCED**: More aggressive reduction
+            // **NEW ADAPTIVE CONTROL**: Stagnation detected, increase exploration.
+            this.q0 = Math.max(0.3, this.q0 * 0.9); // More aggressive reduction, with a floor.
             System.out.printf("  -> Soft stagnation (Stagnation gens: %d)! Reducing q0 to %.4f.\n", stagnationCounter, this.q0);
         }
         return null; // No mutation occurred

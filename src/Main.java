@@ -39,6 +39,7 @@ public class Main {
         final double ALPHA = 1.0; // **MODIFIED for Stability**: Increased from 0.8 to balance against strong local search.
         final double BETA = 2.0;  // **MODIFIED for Stability**: Reduced from 2.5 to decrease greedy heuristic influence.
         final double EVAPORATION_RATE = 0.3; // **MODIFIED for Stability**: Increased from 0.2 to encourage exploration and avoid premature convergence.
+        final double PHEROMONE_SMOOTHING_FACTOR = 0.05; // **NEW**: Proactively encourages exploration by smoothing pheromone differences.
         final double LOCAL_SEARCH_RATE_ACO = 0.3; // **ENHANCED**: Increased from 0.2 to 0.3
         final double EXPLOITATION_FACTOR_Q0 = 0.8; // **NEW**: Probability of making the best local choice
         final int NUM_RANKED_ANTS = 6; // **NEW**: Number of top ants to update pheromone
@@ -68,6 +69,7 @@ public class Main {
                     EXPLOITATION_FACTOR_Q0,
                     ELITIST_WEIGHT,
                     NUM_RANKED_ANTS,
+                    PHEROMONE_SMOOTHING_FACTOR,
                     dagFile
                 );
                 Schedule bestSchedule = aco.run();

@@ -5,7 +5,6 @@ import core.Heuristics;
 import core.Schedule;
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Random;
@@ -21,7 +20,6 @@ public class ACO {
     private final double alpha;
     private final double beta;
     private final double evaporationRate;
-    private final double localSearchRate;
     private double q0;
     private final double initial_q0;
     private final double elitistWeight;
@@ -35,8 +33,6 @@ public class ACO {
     
     // **CONVERGENCE**: Tracking best solutions for convergence detection
     private List<Double> convergenceData;
-    private Schedule[] recentBestSolutions = new Schedule[10]; // Track last 10 best solutions
-    private int recentBestIndex = 0;
     
     // **PERFORMANCE**: Pre-computed upward ranks
     private double[] cachedUpwardRanks;
@@ -57,9 +53,8 @@ public class ACO {
     
     // **STABILITY**: Diversity protection
     private static final double MIN_DIVERSITY_THRESHOLD = 0.1;
-    private int diversityCounter = 0;
 
-    public ACO(int numAnts, int generations, double alpha, double beta, double evaporationRate, double localSearchRate, double q0, double elitistWeight, int numRankedAnts, double pheromoneSmoothingFactor, String dagFile) {
+    public ACO(int numAnts, int generations, double alpha, double beta, double evaporationRate, double q0, double elitistWeight, int numRankedAnts, double pheromoneSmoothingFactor, String dagFile) {
         this.dag = new DAG();
         try {
             this.dag.loadFromFile(dagFile);
@@ -71,7 +66,6 @@ public class ACO {
         this.alpha = alpha;
         this.beta = beta;
         this.evaporationRate = evaporationRate;
-        this.localSearchRate = localSearchRate;
         this.q0 = q0;
         this.initial_q0 = q0;
         this.elitistWeight = elitistWeight;
@@ -118,9 +112,6 @@ public class ACO {
             double currentElitistWeight = this.elitistWeight * (1.0 - (double) gen / generations);
 
             List<Ant> ants = createAnts();
-            
-            // **STABILITY**: Use fixed random seed for each generation
-            Random genRandom = new Random(42 + gen);
             
             for (Ant ant : ants) {
                 ant.constructSolution(dag, pheromoneMatrix, alpha, beta, q0, cachedUpwardRanks);
@@ -174,10 +165,6 @@ public class ACO {
                 }
             }
             
-            // **STABILITY**: Track recent best solutions for diversity analysis
-            recentBestSolutions[recentBestIndex] = new Schedule(iterationBestAntSchedule);
-            recentBestIndex = (recentBestIndex + 1) % recentBestSolutions.length;
-
             // 4. 更新資訊素 (based on the original ant solutions)
             updatePheromones(ants, bestSchedule, currentElitistWeight);
 
@@ -296,25 +283,25 @@ public class ACO {
      * **NEW**: Advanced stagnation handling with diversity protection. Returns a mutated solution if hard stagnation is triggered.
      */
     private Schedule handleAdvancedStagnation(List<Ant> ants) {
-        // **DIVERSITY**: Calculate population diversity
-        double diversity = calculatePopulationDiversity(ants);
-        
-        // **DIVERSITY**: Force diversity if too low
-        if (diversity < MIN_DIVERSITY_THRESHOLD) {
-            diversityCounter++;
-            if (diversityCounter >= 5) {
-                System.out.printf("  -> Low diversity detected (%.4f)! Forcing diversification.\n", diversity);
+        if (stagnationCounter >= SOFT_STAGNATION_LIMIT) {
+            System.out.printf("  -> Soft stagnation detected (%d generations). Diversifying...\n", stagnationCounter);
+            
+            // Lower q0 to encourage exploration
+            this.q0 = Math.max(0.1, this.q0 * 0.9);
+            System.out.printf("  -> Reduced q0 to %.4f\n", this.q0);
+
+            // Check population diversity
+            double diversity = calculatePopulationDiversity(ants);
+            System.out.printf("  -> Population diversity: %.4f\n", diversity);
+
+            if (diversity < MIN_DIVERSITY_THRESHOLD) {
+                System.out.println("  -> Diversity below threshold. Forcing diversification.");
                 forceDiversification();
-                diversityCounter = 0;
             }
-        } else {
-            diversityCounter = 0;
         }
         
-        // Level 2: Hard Stagnation -> **MODIFIED**: Force diversification AND mutate the best solution.
         if (stagnationCounter >= HARD_STAGNATION_LIMIT) {
-            System.out.printf("  -> Hard stagnation! Forcing diversification and mutating best solution.\n");
-            forceDiversification();
+            System.out.printf("  -> Hard stagnation detected (%d generations). Resetting pheromones and mutating...\n", stagnationCounter);
             
             // **NEW**: Mutate the global best schedule to inject new genetic material
             Schedule mutatedBest = new Schedule(bestSchedule);
@@ -330,12 +317,6 @@ public class ACO {
             stagnationCounter = 0; // Reset counter completely after action
             convergenceCounter = 0; // Reset convergence counter too
             return mutatedBest;
-        } 
-        // Level 1: Soft Stagnation -> Adjust q0, triggers every SOFT_STAGNATION_LIMIT generations
-        else if (stagnationCounter > 0 && stagnationCounter % SOFT_STAGNATION_LIMIT == 0) {
-            // **NEW ADAPTIVE CONTROL**: Stagnation detected, increase exploration.
-            this.q0 = Math.max(0.3, this.q0 * 0.9); // More aggressive reduction, with a floor.
-            System.out.printf("  -> Soft stagnation (Stagnation gens: %d)! Reducing q0 to %.4f.\n", stagnationCounter, this.q0);
         }
         return null; // No mutation occurred
     }
@@ -344,18 +325,16 @@ public class ACO {
      * **NEW**: Calculate population diversity based on makespan variance.
      */
     private double calculatePopulationDiversity(List<Ant> ants) {
-        if (ants.size() <= 1) return 1.0;
+        if (ants == null || ants.isEmpty()) return 0.0;
+
+        // **NEW**: A simple diversity metric based on the number of unique schedules.
+        // A more complex one could analyze structural differences.
+        long uniqueSchedules = ants.stream()
+                                   .map(Ant::getSchedule)
+                                   .distinct()
+                                   .count();
         
-        double[] makespans = ants.stream()
-            .mapToDouble(ant -> ant.getSchedule().getMakespan())
-            .toArray();
-        
-        double mean = Arrays.stream(makespans).average().orElse(0.0);
-        double variance = Arrays.stream(makespans)
-            .map(x -> Math.pow(x - mean, 2))
-            .average().orElse(0.0);
-        
-        return Math.sqrt(variance) / mean; // Normalized standard deviation
+        return (double) uniqueSchedules / ants.size();
     }
 
     /**

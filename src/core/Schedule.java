@@ -51,6 +51,22 @@ public class Schedule {
         this.criticalPathLinks = new HashMap<>(other.criticalPathLinks);
     }
     
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) return true;
+        if (o == null || getClass() != o.getClass()) return false;
+        Schedule schedule = (Schedule) o;
+        return Arrays.equals(chromosome, schedule.chromosome) &&
+               Objects.equals(taskOrder, schedule.taskOrder);
+    }
+
+    @Override
+    public int hashCode() {
+        int result = Objects.hash(taskOrder);
+        result = 31 * result + Arrays.hashCode(chromosome);
+        return result;
+    }
+
     public void setMakespan(double makespan) {
         this.makespan = makespan;
         this.isEvaluated = true;
